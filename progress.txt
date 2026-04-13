@@ -1,0 +1,31 @@
+13/04/26
+Targets for 13th april:
+
+Finish data scraping
+Sentiment scoring
+vader/FinBERT(ash)
+Preprocess and create master csv
+EDA
+Hypothesis Testing
+Model traning - as much as possible
+
+To do - 
+Formula analysis and refinement
+Dashboard creation
+Visualization of data
+Testing for different portfolios under different shock scenarios
+Incremental(Github actions)
+Time series forecasting, ARIMA
+
+advanced - big data, regression, classification
+
+Steps - 
+Data ingestion
+Data preprocessing
+ML pipeline
+
+Input/Output - 
+input by user - portfolio(from the timeframe of scraping)
+input from system - current scraped news(past 1 week)
+ML pipeline runs
+output - analysis and suggestions(on the basis of the results of ML pipeline)

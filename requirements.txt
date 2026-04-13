@@ -1,0 +1,14 @@
+yfinance
+pandas
+requests
+beautifulsoup4
+feedparser
+vaderSentiment
+scikit-learn
+statsmodels
+matplotlib
+seaborn
+joblib
+python-dotenv
+transformers
+torch
