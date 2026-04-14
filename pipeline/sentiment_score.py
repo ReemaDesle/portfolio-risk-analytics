@@ -32,13 +32,14 @@ log = logging.getLogger(__name__)
 # -----------------------------------------------
 # 1  DATE RANGE  <- change these two variables
 # -----------------------------------------------
-DEFAULT_START_DATE = "2018-01-01"
-DEFAULT_END_DATE   = "2024-12-31"
+DEFAULT_START_DATE = "2017-01-01"
+DEFAULT_END_DATE   = "2026-12-31"
 
 # -----------------------------------------------
 # 2  FinBERT settings
 # -----------------------------------------------
 FINBERT_MODEL = "ProsusAI/finbert"   # downloads ~440 MB on first run
+ROBERTA_MODEL = "cardiffnlp/twitter-roberta-base-sentiment-latest"
 BATCH_SIZE    = 32                   # lower to 8 if CPU RAM is tight
 MAX_TOKEN_LEN = 512
 
@@ -71,18 +72,19 @@ def clean_text(text: str) -> str:
 
 
 # ===============================================
-# FinBERT loader
+# Models loader & scoring
 # ===============================================
 
 def load_finbert():
     try:
         import torch
+        import gc
         from transformers import AutoTokenizer, AutoModelForSequenceClassification
     except ImportError:
         raise ImportError("Run:  pip install transformers torch")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    log.info("  Loading FinBERT on %s  (first run downloads ~440 MB)", device.upper())
+    log.info("  Loading FinBERT on %s", device.upper())
 
     tokenizer = AutoTokenizer.from_pretrained(FINBERT_MODEL)
     model     = AutoModelForSequenceClassification.from_pretrained(FINBERT_MODEL)
@@ -94,18 +96,34 @@ def load_finbert():
     return tokenizer, model, device, label_order
 
 
-# ===============================================
-# Batch scoring
-# ===============================================
+def load_roberta():
+    try:
+        import torch
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+    except ImportError:
+        raise ImportError("Run:  pip install transformers torch")
 
-def score_with_finbert(texts, tokenizer, model, device, label_order):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    log.info("  Loading RoBERTa on %s", device.upper())
+
+    tokenizer = AutoTokenizer.from_pretrained(ROBERTA_MODEL)
+    model     = AutoModelForSequenceClassification.from_pretrained(ROBERTA_MODEL)
+    model     = model.to(device)
+    model.eval()
+
+    # RoBERTa cardiffnlp/twitter-roberta-base-sentiment-latest usually: 0=negative, 1=neutral, 2=positive
+    label_order = ["negative", "neutral", "positive"]
+    return tokenizer, model, device, label_order
+
+
+def score_with_model(texts, tokenizer, model, device, label_order, model_name):
     """
-    Returns DataFrame with columns:
-      finbert_compound  in [-1, +1]  = P(pos) - P(neg)
-      finbert_positive  in [0,  1]
-      finbert_negative  in [0,  1]
-      finbert_neutral   in [0,  1]
-      finbert_label     str
+    Returns DataFrame with generic columns:
+      sentiment_compound  in [-1, +1]  = P(pos) - P(neg)
+      sentiment_positive  in [0,  1]
+      sentiment_negative  in [0,  1]
+      sentiment_neutral   in [0,  1]
+      sentiment_label     str
     """
     import torch
     import torch.nn.functional as F
@@ -129,16 +147,16 @@ def score_with_finbert(texts, tokenizer, model, device, label_order):
             p_neg = float(row[label_order.index("negative")])
             p_neu = float(row[label_order.index("neutral")])
             results.append({
-                "finbert_compound": round(p_pos - p_neg, 6),
-                "finbert_positive": round(p_pos, 6),
-                "finbert_negative": round(p_neg, 6),
-                "finbert_neutral":  round(p_neu, 6),
-                "finbert_label":    label_order[int(row.argmax())],
+                "sentiment_compound": round(p_pos - p_neg, 6),
+                "sentiment_positive": round(p_pos, 6),
+                "sentiment_negative": round(p_neg, 6),
+                "sentiment_neutral":  round(p_neu, 6),
+                "sentiment_label":    label_order[int(row.argmax())],
             })
 
         done = min(i + BATCH_SIZE, n)
         if done % 500 < BATCH_SIZE or done == n:
-            log.info("    Scored %d / %d articles", done, n)
+            log.info("    [%s] Scored %d / %d articles", model_name, done, n)
 
     return pd.DataFrame(results)
 
@@ -180,13 +198,13 @@ def aggregate_daily(df, domain):
 
     prefix = domain[:4]   # "geo_" or "tech"
     grp = sub.groupby(sub.index).agg(
-        sentiment_mean = ("finbert_compound", "mean"),
-        sentiment_std  = ("finbert_compound", "std"),
-        article_count  = ("finbert_compound", "count"),
-        avg_positive   = ("finbert_positive", "mean"),
-        avg_negative   = ("finbert_negative", "mean"),
-        avg_neutral    = ("finbert_neutral",  "mean"),
-        dominant_label = ("finbert_label",
+        sentiment_mean = ("sentiment_compound", "mean"),
+        sentiment_std  = ("sentiment_compound", "std"),
+        article_count  = ("sentiment_compound", "count"),
+        avg_positive   = ("sentiment_positive", "mean"),
+        avg_negative   = ("sentiment_negative", "mean"),
+        avg_neutral    = ("sentiment_neutral",  "mean"),
+        dominant_label = ("sentiment_label",
                           lambda x: x.mode()[0] if not x.empty else "neutral"),
     )
     grp.index.name = "date"
@@ -213,7 +231,7 @@ def add_rolling_features(df, window=7):
         roll_std  = df[col].rolling(window, min_periods=3).std()
         df[f"{prefix}_shock_flag"]         = ((df[col] - roll_mean).abs() > 2 * roll_std).astype(int)
         df[f"{prefix}_sentiment_delta"]    = df[col].diff()
-        df[f"{prefix}_direction"]          = np.sign(df[col]).astype(int)
+        df[f"{prefix}_direction"]          = np.sign(df[col]).fillna(0).astype(int)
 
     geo_col  = next((c for c in df.columns if "geo"  in c and "sentiment_mean" in c), None)
     tech_col = next((c for c in df.columns if "tech" in c and "sentiment_mean" in c), None)
@@ -261,19 +279,54 @@ def run(
     news["headline_clean"] = news["headline"].apply(clean_text)
     news = news[news["headline_clean"].str.strip() != ""].reset_index(drop=True)
 
-    # Score
-    tokenizer, model, device, label_order = load_finbert()
-    scores = score_with_finbert(news["headline_clean"].tolist(), tokenizer, model, device, label_order)
-    news   = pd.concat([news, scores], axis=1)
-
-    # Save full scored file for EDA
-    news.to_csv(PROCESSED_DIR / "news_finbert_raw.csv", index=False)
-    log.info("  Label dist:\n%s", news["finbert_label"].value_counts().to_string())
-
-    # Normalise domain labels
+    # Normalise domain labels FIRST
     news["domain"] = news["domain"].str.lower().str.strip()
     news.loc[news["domain"].str.contains("geo|polit|war|conflict", na=False), "domain"] = "geopolitical"
     news.loc[news["domain"].str.contains("tech|software|ai|semi",  na=False), "domain"] = "technology"
+
+    # Split for Dual-Model Scoring
+    geo_news = news[news["domain"] == "geopolitical"].copy()
+    tech_news = news[news["domain"] == "technology"].copy()
+    other_news = news[~news["domain"].isin(["geopolitical", "technology"])].copy()
+    scored_dfs = []
+
+    # 1. Score Geopolitical with FinBERT
+    if not geo_news.empty:
+        log.info("Scoring %d Geopolitical articles with FinBERT...", len(geo_news))
+        tokenizer, model, device, label_order = load_finbert()
+        scores = score_with_model(geo_news["headline_clean"].tolist(), tokenizer, model, device, label_order, "FinBERT")
+        scored_dfs.append(pd.concat([geo_news.reset_index(drop=True), scores], axis=1))
+        # Clear memory
+        del tokenizer, model
+        import gc; gc.collect()
+
+    # 2. Score Technology with RoBERTa
+    if not tech_news.empty:
+        log.info("Scoring %d Technology articles with RoBERTa...", len(tech_news))
+        tokenizer, model, device, label_order = load_roberta()
+        scores = score_with_model(tech_news["headline_clean"].tolist(), tokenizer, model, device, label_order, "RoBERTa")
+        scored_dfs.append(pd.concat([tech_news.reset_index(drop=True), scores], axis=1))
+        del tokenizer, model
+        import gc; gc.collect()
+
+    # 3. Process Any Other Domains (fallback to FinBERT)
+    if not other_news.empty:
+        log.info("Scoring %d Other articles with FinBERT...", len(other_news))
+        tokenizer, model, device, label_order = load_finbert()
+        scores = score_with_model(other_news["headline_clean"].tolist(), tokenizer, model, device, label_order, "FinBERT")
+        scored_dfs.append(pd.concat([other_news.reset_index(drop=True), scores], axis=1))
+        del tokenizer, model
+        import gc; gc.collect()
+
+    if not scored_dfs:
+        log.info("No news to score")
+        return pd.DataFrame()
+
+    news = pd.concat(scored_dfs, ignore_index=True)
+
+    # Save full scored file for EDA
+    news.to_csv(PROCESSED_DIR / "news_scored_raw.csv", index=False)
+    log.info("  Label dist:\n%s", news["sentiment_label"].value_counts().to_string())
 
     # Daily aggregation
     geo_daily  = aggregate_daily(news, "geopolitical")
