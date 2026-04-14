@@ -33,3 +33,8 @@ Thumbs.db
 reports/*.pdf
 changedplan_scrape_news.txt
 challenges.txt
+
+# Scrapers & Checkpoints
+scrapers/checkpoints/financial_news_checkpoint.json
+scrapers/clean_news_finance.py
+
