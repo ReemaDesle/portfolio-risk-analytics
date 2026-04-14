@@ -720,7 +720,7 @@ def combine_all(frames: list[pd.DataFrame]) -> pd.DataFrame:
 
 def run(start_date: str, end_date: str, sources: list[str] = None):
     ensure_dirs()
-    all_sources = ["gdelt", "reuters", "techcrunch", "hackernews"]
+    all_sources = ["reuters", "techcrunch", "hackernews"] # "gdelt" temporarily removed
     sources = [s.lower() for s in sources] if sources else all_sources
 
     log.info("═" * 55)
@@ -730,7 +730,7 @@ def run(start_date: str, end_date: str, sources: list[str] = None):
 
     frames = []
 
-    if "gdelt"       in sources: frames.append(scrape_gdelt(start_date, end_date))
+    # if "gdelt"       in sources: frames.append(scrape_gdelt(start_date, end_date)) # Commented out to avoid rate limits
     if "reuters"     in sources: frames.append(scrape_reuters_rss())
     if "techcrunch"  in sources: frames.append(scrape_techcrunch())
     if "hackernews"  in sources: frames.append(scrape_hackernews(start_date, end_date))
@@ -761,7 +761,7 @@ if __name__ == "__main__":
         "--sources",
         nargs="+",
         default=None,
-        choices=["gdelt", "reuters", "techcrunch", "hackernews"],
+        choices=["reuters", "techcrunch", "hackernews"], # "gdelt" temporarily removed
         help="Which sources to scrape (default: all)",
     )
     args = parser.parse_args()
