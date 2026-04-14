@@ -12,3 +12,4 @@ joblib
 python-dotenv
 transformers
 torch
+tqdm

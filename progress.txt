@@ -9,6 +9,37 @@ EDA
 Hypothesis Testing
 Model traning - as much as possible
 
+15/04/26 - 
+Work done(ash):
+Scraped financial news from ET, Livemint and Moneycontrol(March 2026 to April 2026)
+Processed the data to remove junk rows and clean headlines
+Ran sentiment analysis via FinBERT
+
+Output:
+financial_news_final.csv(2261 rows)
+financial_news_scored.csv
+sentiment:
+neutral     1219
+negative     627
+positive     415
+
+Mean scores by label:
+tone_label
+negative    0.7943
+neutral     0.8209
+positive    0.7901
+
+Time taken by finbert: 2-3 minutes
+
+Challenges:
+First tried web archive - faced rate limit after ~2400 rows
+Tried 3-4 different approaches to bypass html page blockers - got imbalanced dataset(most from ET)
+Direct pagination worked(Livemint still couldn't be scraped)
+Date column was left with placeholder, fixed that via news url
+
+Doubt: Will other news have to be scraped for the same timeframe as well? 
+       Will this scraped news work with already scraped techcrunch news?
+
 To do - 
 Formula analysis and refinement
 Dashboard creation
