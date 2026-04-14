@@ -31,3 +31,4 @@ Thumbs.db
 
 # Reports (generate locally)
 reports/*.pdf
+changedplan_scrape_news.txt

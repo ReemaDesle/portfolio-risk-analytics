@@ -39,7 +39,7 @@ import pandas as pd
 import yfinance as yf
 
 
-DEFAULT_START_DATE = "2018-01-01"   # inclusive
+DEFAULT_START_DATE = "2017-01-01"   # inclusive
 DEFAULT_END_DATE   = "2024-12-31"   # inclusive (yfinance end is exclusive, handled below)
 
 # ──────────────────────────────────────────────
