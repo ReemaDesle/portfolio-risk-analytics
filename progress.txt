@@ -70,13 +70,7 @@ time required for all the scraping to be done: 11:10 to 11:38 (~30 minutes)
 9. fixed errors in hypothesis 4,5 in eda and hypothesis notebook
 
   to do:
-  1. clean duplicate scraper for tech news(hacker news and techcrunch check more if done) and respective csv files
-  2. preprocess finance should only have sentiment scoring add cleaning logic to the scraper script
-  3. organize project structure for:
-    i.sentiment scoring
-    ii. preprocessing+scoring in finance 
-    iii. put all scoring scripts in the pipeline folder under one scoring folder
-    iv. run all scrapers script in the scrapers folder
+
   4. hypothesis tests chi square for domains and/or portfolios
   5. hypothesis test for t test comparison k fold type sampling and get avergae of all samples- compare it when we do z test of the entire population( see if it hold true with the n>30 logic)
   6. annova testing for more than 2 samples
@@ -84,7 +78,17 @@ time required for all the scraping to be done: 11:10 to 11:38 (~30 minutes)
   8. how to get more volume of data to pass to the ml model?-(what is the ideal volume of data to be passed to the model?)
   9. scoring formulae breakdown for risk etc. how to make it better based on eda etc?
   
+work done(ash): 17/04/26
 
+1. cleaned project structure(scraper, scoring), deleted unnecesary txt files
+2. modified hardcoded dates in fetch_prices.py to match 2026 data.
+3. modified clean_data to store fetch_prices data in data/raw/tickers instead of data/raw
+4. added missing hypothesis code to check portfolio sensitivity and recovery time
+5. recorded inferences of hypothesis testing in hypothesis_testing_results.txt
+6. verified data compatibility for statistical tests
+7. Ran t-test, z-test and ANOVA in a separate notebook(statistical_validation)
+
+to do: interpret test results
 
 
 
