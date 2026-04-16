@@ -1,29 +1,28 @@
 """
-Portfolio Risk Analytics — Geopolitical News Scraper
-=====================================================
-Fetches geopolitical news from Hacker News (Algolia API).
-Applies cleaning and filtering similar to the financial news pipeline.
+Portfolio Risk Analytics — Technology News Scraper
+==================================================
+Fetches technology news from TechCrunch and Hacker News.
+Applies cleaning and filtering similar to the global news pipeline.
 
 Output columns
 --------------
   date        YYYY-MM-DD
-  source      "hackernews"
-  domain      "geopolitical"
+  source      "techcrunch" | "hackernews"
+  domain      "technology"
   headline    article title
   tone_score  None (downstream step enriches this)
   url         link to original article
 
 Usage
 -----
-  python scrape_geo.py --start 2026-03-20 --end 2026-04-15
+  python scrape_tech.py --start 2026-03-20 --end 2026-04-15
 
-Output saved to:  data/raw/news/geo_news.csv
+Output saved to:  data/raw/news/tech_news.csv
 """
 
 import os
 import re
 import sys
-import json
 import time
 import logging
 import argparse
@@ -33,7 +32,6 @@ from pathlib import Path
 
 import requests
 import pandas as pd
-from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
 warnings.filterwarnings("ignore")
@@ -48,15 +46,11 @@ DEFAULT_END_DATE   = "2021-06-15"
 ROOT_DIR = Path(__file__).resolve().parent.parent
 RAW_DIR  = ROOT_DIR / "data" / "raw" / "news"
 
-# Hacker News keywords that are geo-relevant
-HN_GEO_KEYWORDS = [
-    "sanctions", "war", "invasion", "geopolitical",
-    "NATO", "Russia", "China", "Iran", "Palestine",
-    "Israel", "Taliban", "coup", "election fraud",
-    "nuclear", "tariff", "trade war", "terrorism",
-    "inflation policy", "federal reserve", "OPEC",
-    "oil embargo", "United Nations", "G7", "G20",
-    "refugee", "diplomacy", "treaty", "military",
+TECH_KEYWORDS = [
+    "AI", "artificial intelligence", "machine learning", "semiconductor",
+    "chip shortage", "tech earnings", "NVIDIA", "Apple", "Microsoft",
+    "cybersecurity", "data breach", "IPO", "tech layoffs", "OpenAI",
+    "cryptocurrency", "bitcoin", "cloud computing", "regulation",
 ]
 
 # Regex patterns for junk rows (similar to preprocess_finance.py)
@@ -95,15 +89,6 @@ def save(df: pd.DataFrame, filename: str) -> Path:
     return path
 
 
-def _date_range(start: str, end: str):
-    s = datetime.strptime(start, "%Y-%m-%d")
-    e = datetime.strptime(end,   "%Y-%m-%d")
-    d = s
-    while d <= e:
-        yield d.strftime("%Y-%m-%d")
-        d += timedelta(days=1)
-
-
 def _safe_get(url: str, params=None, headers=None,
               retries: int = 3, wait: float = 2.0) -> requests.Response | None:
     for attempt in range(1, retries + 1):
@@ -128,32 +113,86 @@ def clean_headline(text: str) -> str:
     if not isinstance(text, str): return ""
     # Decode HTML entities
     text = text.replace("&amp;", "&").replace("&quot;", '"').replace("&#39;", "'")
-    # Remove branding separators (adapted from preprocess_finance.py)
-    text = re.sub(r"\s*[|\u2014\u2013]\s*(Reuters|NYT|BBC|CNN|AP|Guardian|Hacker News).*$", "", text, flags=re.I)
+    # Remove branding separators
+    text = re.sub(r"\s*[|\u2014\u2013]\s*(TechCrunch|Hacker News|Reuters|NYT|BBC|CNN|AP|Guardian).*$", "", text, flags=re.I)
     # Collapse whitespace
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
 # ══════════════════════════════════════════════
-# SOURCE — Hacker News (Algolia API)
+# SOURCE 1 — TechCrunch RSS
 # ══════════════════════════════════════════════
 
-_HN_BASE = "https://hn.algolia.com/api/v1/search_by_date"
+def scrape_techcrunch() -> pd.DataFrame:
+    """Fetch recent TechCrunch stories via RSS."""
+    log.info("── TechCrunch RSS ───────────────────────────")
+    try:
+        import feedparser
+    except ImportError:
+        log.warning("  feedparser not installed. Run: pip install feedparser")
+        return pd.DataFrame()
 
-def scrape_hackernews_geo(start_date: str, end_date: str) -> pd.DataFrame:
-    """Fetch geo-relevant Hacker News stories using geopolitical keyword list."""
-    log.info("── Hacker News (geo keywords)  %s → %s", start_date, end_date)
+    FEEDS = [
+        "https://techcrunch.com/feed/",
+        "https://techcrunch.com/category/artificial-intelligence/feed/",
+        "https://techcrunch.com/category/startups/feed/",
+    ]
+
+    rows = []
+    for feed_url in FEEDS:
+        try:
+            feed = feedparser.parse(feed_url)
+            for entry in feed.entries:
+                pub = entry.get("published_parsed") or entry.get("updated_parsed")
+                date_str = (
+                    datetime(*pub[:3]).strftime("%Y-%m-%d") if pub
+                    else datetime.today().strftime("%Y-%m-%d")
+                )
+                title   = entry.get("title", "")
+                summary = entry.get("summary", "")
+                rows.append({
+                    "date":       date_str,
+                    "source":     "techcrunch",
+                    "domain":     "technology",
+                    "headline":   f"{title}. {summary}"[:500],
+                    "tone_score": None,
+                    "url":        entry.get("link", ""),
+                })
+        except Exception as exc:
+            log.warning("  TechCrunch error (%s): %s", feed_url, exc)
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.drop_duplicates(subset=["url"])
+    log.info("  TechCrunch: %d articles collected (raw)", len(df))
+    return df
+
+
+# ══════════════════════════════════════════════
+# SOURCE 2 — Hacker News (Algolia API)
+# ══════════════════════════════════════════════
+
+def scrape_hackernews(start_date: str, end_date: str) -> pd.DataFrame:
+    """Fetch tech stories from Hacker News using keyword list."""
+    log.info("── Hacker News (tech keywords)  %s → %s", start_date, end_date)
+    BASE = "https://hn.algolia.com/api/v1/search_by_date"
 
     s_ts = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp())
     e_ts = int(datetime.strptime(end_date,   "%Y-%m-%d").timestamp())
 
-    all_rows = []
+    rows = []
     seen_urls = set()
 
-    for kw in HN_GEO_KEYWORDS:
+    # Keywords for tech-specific HN search
+    hn_keywords = [
+        "artificial intelligence", "semiconductor", "layoffs",
+        "OpenAI", "bitcoin", "cybersecurity", "IPO", "startup", "NVIDIA"
+    ]
+
+    for kw in hn_keywords:
         page = 0
-        while page < 3:    # max 3 pages (600 hits) per keyword
+        while page < 5:    # max 5 pages (1000 hits) per keyword
             params = {
                 "query":          kw,
                 "tags":           "story",
@@ -161,7 +200,7 @@ def scrape_hackernews_geo(start_date: str, end_date: str) -> pd.DataFrame:
                 "hitsPerPage":    200,
                 "page":           page,
             }
-            r = _safe_get(_HN_BASE, params=params)
+            r = _safe_get(BASE, params=params)
             if r is None:
                 break
 
@@ -170,35 +209,37 @@ def scrape_hackernews_geo(start_date: str, end_date: str) -> pd.DataFrame:
             nb_pages = data.get("nbPages", 1)
 
             for h in hits:
-                url   = h.get("url", "") or ""
-                title = (h.get("title") or h.get("story_title") or "").strip()
-                if not title or url in seen_urls:
+                url = h.get("url", "") or ""
+                if not url or url in seen_urls:
                     continue
                 seen_urls.add(url)
 
-                ts       = h.get("created_at_i", 0)
+                ts = h.get("created_at_i", 0)
                 date_str = datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d") if ts else start_date
+                title    = (h.get("title") or h.get("story_title") or "").strip()
+                
+                if not title:
+                    continue
 
-                all_rows.append({
-                    "date":      date_str,
-                    "source":    "hackernews",
-                    "domain":    "geopolitical",
-                    "headline":  title[:400],
+                rows.append({
+                    "date":       date_str,
+                    "source":     "hackernews",
+                    "domain":     "technology",
+                    "headline":   title[:400],
                     "tone_score": None,
-                    "url":       url,
+                    "url":        url,
                 })
 
             page += 1
-            if page >= min(nb_pages, 3):
+            if page >= min(nb_pages, 5):
                 break
             time.sleep(0.3)
 
-    if not all_rows:
+    if not rows:
         return pd.DataFrame()
 
-    df = pd.DataFrame(all_rows)
+    df = pd.DataFrame(rows)
     df = df.drop_duplicates(subset=["headline", "date"])
-    df = df.sort_values("date").reset_index(drop=True)
     log.info("  Hacker News: %d articles collected (raw)", len(df))
     return df
 
@@ -215,17 +256,27 @@ def run(start_date: str = DEFAULT_START_DATE,
     ensure_dirs()
 
     log.info("═" * 60)
-    log.info("  GEO SCRAPER (HN ONLY) |  %s → %s", start_date, end_date)
+    log.info("  TECH SCRAPER |  %s → %s", start_date, end_date)
     log.info("═" * 60)
 
     # 1. Scrape
-    df = scrape_hackernews_geo(start_date, end_date)
+    frames = []
     
-    if df.empty:
+    tc_df = scrape_techcrunch()
+    if not tc_df.empty:
+        frames.append(tc_df)
+        
+    hn_df = scrape_hackernews(start_date, end_date)
+    if not hn_df.empty:
+        frames.append(hn_df)
+
+    if not frames:
         log.error("No articles collected. Exiting.")
         return pd.DataFrame(columns=OUTPUT_COLS)
 
-    # 2. Preprocess (similar to preprocess_finance.py)
+    df = pd.concat(frames, ignore_index=True)
+
+    # 2. Preprocess
     before_p = len(df)
     
     # Filter junk
@@ -249,15 +300,16 @@ def run(start_date: str = DEFAULT_START_DATE,
         if col not in df.columns:
             df[col] = None
     df = df[OUTPUT_COLS].copy()
+    df = df.sort_values("date").reset_index(drop=True)
 
     # 4. Save
-    save(df, "geo_news.csv")
+    save(df, "tech_news.csv")
 
     log.info("")
     log.info("═" * 60)
     log.info("  COMPLETE")
     log.info("  Total articles : %d", len(df))
-    log.info("  Output         : %s", RAW_DIR / "geo_news.csv")
+    log.info("  Output         : %s", RAW_DIR / "tech_news.csv")
     log.info("═" * 60)
 
     return df
@@ -265,7 +317,7 @@ def run(start_date: str = DEFAULT_START_DATE,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Geopolitical news scraper: Hacker News source with preprocessing"
+        description="Technology news scraper: TechCrunch + Hacker News with preprocessing"
     )
     parser.add_argument("--start",  default=DEFAULT_START_DATE,
                         help=f"Start date YYYY-MM-DD (default: {DEFAULT_START_DATE})")
