@@ -67,6 +67,7 @@ time required for all the scraping to be done: 11:10 to 11:38 (~30 minutes)
   iv.is there some lag between news and market volatility?
   v.which domain has better predictive footing in the market?
   vi.which is the most sensitive portfolio or will take longer to stabilize?
+9. fixed errors in hypothesis 4,5 in eda and hypothesis notebook
 
   to do:
   1. clean duplicate scraper for tech news(hacker news and techcrunch check more if done) and respective csv files
@@ -81,6 +82,8 @@ time required for all the scraping to be done: 11:10 to 11:38 (~30 minutes)
   6. annova testing for more than 2 samples
   7. ml models
   8. how to get more volume of data to pass to the ml model?-(what is the ideal volume of data to be passed to the model?)
+  9. scoring formulae breakdown for risk etc. how to make it better based on eda etc?
+  
 
 
 
