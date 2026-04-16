@@ -60,6 +60,27 @@ time required for all the scraping to be done: 11:10 to 11:38 (~30 minutes)
   i.log returns 
   ii.rolling volatility(5 days)
   iii.time lagging
+8.EDA done to answer the hypotheses:
+  i.Does war related news affect safe haven assets?
+  ii.Do tech heavy portfolios react more heavily than others due to sentiment spikes?
+  iii.which type of portfolio gets affected most easily?
+  iv.is there some lag between news and market volatility?
+  v.which domain has better predictive footing in the market?
+  vi.which is the most sensitive portfolio or will take longer to stabilize?
+
+  to do:
+  1. clean duplicate scraper for tech news(hacker news and techcrunch check more if done) and respective csv files
+  2. preprocess finance should only have sentiment scoring add cleaning logic to the scraper script
+  3. organize project structure for:
+    i.sentiment scoring
+    ii. preprocessing+scoring in finance 
+    iii. put all scoring scripts in the pipeline folder under one scoring folder
+    iv. run all scrapers script in the scrapers folder
+  4. hypothesis tests chi square for domains and/or portfolios
+  5. hypothesis test for t test comparison k fold type sampling and get avergae of all samples- compare it when we do z test of the entire population( see if it hold true with the n>30 logic)
+  6. annova testing for more than 2 samples
+  7. ml models
+  8. how to get more volume of data to pass to the ml model?-(what is the ideal volume of data to be passed to the model?)
 
 
 
@@ -89,10 +110,10 @@ Time series forecasting, ARIMA
 advanced - big data, regression, classification
 
 advanced cleaning (to be done later and compared with previous versions for accuracy attained)-
-1.Entity Recognition (NER): Right now, the AI reads sentences as a whole. You could use a library like spaCy to extract the exact company name or country being talked about. This prevents the AI from mixing up "Apple" (the fruit crop) with "Apple" (the tech stock).
-2.News Decay Weights: Not all weekend news is equal. A groundbreaking headline published on Friday night impacts Monday morning much harder than a headline published on Sunday afternoon. You could add an algorithm that "decays" the weight of the sentiment based on how many hours it has been since publication.
+1.Entity Recognition (NER):use spaCy to get exact company names, maybe help sentiment scorers get better context
+2.News Decay Weights: classify urgency or imapct of the headlines- maybe assign weights to the same according to the importance levels
 For the yFinance Data:
-3.Volume Surges (Liquidity Cleaning): Price drops don't mean much if nobody is trading. You could pull Volume data from Yahoo Finance and create a "Volume Surge" column (identifying days where trading volume was 200% higher than the 30-day average).
+3.Volume Surges: needed to relate the price drop/rise based on the volume of trading not have absolute but relative percentage change
 4.Market Baseline Subtraction (Alpha): If the entire S&P 500 crashes, your tech stocks will crash too, even if tech news was positive! To clean this, you should mathematically subtract the baseline SPY returns from your tech stock returns. This isolates the actual impact of the news on the specific stock!
 
 
