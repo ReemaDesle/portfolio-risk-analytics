@@ -12,6 +12,7 @@ def main():
     scripts = [
         "scrapers/scrape_finance.py",
         "scrapers/scrape_geo.py",
+        "scrapers/scrape_tech.py",
         "scrapers/scrape_news.py",
         "scrapers/fetch_prices.py"
     ]

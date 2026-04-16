@@ -1,3 +1,5 @@
+Workflow
+
 13/04/26
 Targets for 13th april:
 
@@ -43,9 +45,39 @@ Doubt: Will other news have to be scraped for the same timeframe as well?-yes
 16/04/26
 work done(Reema):
 1.made a combined script to scrape all the sources for common window (2026-03-20 to 2026-04-15)
-time required for all the scraping to be done: 09:48 to 
+time required for all the scraping to be done: 11:10 to 11:38 (~30 minutes)
 2.cleaned unnecesary functions for gdelt,reuters etc from the scrape_news.py
+3.set up finbert time: 11:45 to 12:15 (~30 minutes)
+4.merged all news in one master csv
+5.combined text sentiment and stock prices by date
+6.data cleaning- push news from weekends to next weekday(yfinance only has working days but news collected for all days )
+  i.news cleaning-junk filtering,headline normalization,domain standardization,deduplication
+  ii.weekend rollover
+  iii.holiday gap filling(forward filling)
+  iv sentiment modelling: weighted aggregation(weight added for number of articles counted-column added for this in the csv)
+  v.clipped outliers in +-3 standard deviations(to prevent model hallucinations check if it actually works by comparison)
+7 fields added in master data csv to get :
+  i.log returns 
+  ii.rolling volatility(5 days)
+  iii.time lagging
 
+
+
+
+output:
+13:29:06  INFO        COMPLETE
+13:29:06  INFO        Total articles    : 3236
+13:29:06  INFO        Trading days      : 18
+13:29:06  INFO        master_data cols  : 96  (prices + returns + vol + sentiment + lags)
+13:29:06  INFO
+13:29:06  INFO        SRI summary (mean per portfolio):
+13:29:06  INFO      
+              risk_score  safety_score   sri
+portfolio
+balanced           18.92         14.36  4.56
+conservative       20.16         12.47  7.69
+geopolitical       20.40         12.11  8.29
+tech               17.44         16.62  0.82
 To do - 
 Formula analysis and refinement
 Dashboard creation
@@ -55,6 +87,14 @@ Incremental(Github actions)
 Time series forecasting, ARIMA
 
 advanced - big data, regression, classification
+
+advanced cleaning (to be done later and compared with previous versions for accuracy attained)-
+1.Entity Recognition (NER): Right now, the AI reads sentences as a whole. You could use a library like spaCy to extract the exact company name or country being talked about. This prevents the AI from mixing up "Apple" (the fruit crop) with "Apple" (the tech stock).
+2.News Decay Weights: Not all weekend news is equal. A groundbreaking headline published on Friday night impacts Monday morning much harder than a headline published on Sunday afternoon. You could add an algorithm that "decays" the weight of the sentiment based on how many hours it has been since publication.
+For the yFinance Data:
+3.Volume Surges (Liquidity Cleaning): Price drops don't mean much if nobody is trading. You could pull Volume data from Yahoo Finance and create a "Volume Surge" column (identifying days where trading volume was 200% higher than the 30-day average).
+4.Market Baseline Subtraction (Alpha): If the entire S&P 500 crashes, your tech stocks will crash too, even if tech news was positive! To clean this, you should mathematically subtract the baseline SPY returns from your tech stock returns. This isolates the actual impact of the news on the specific stock!
+
 
 Steps - 
 Data ingestion

@@ -1,0 +1,43 @@
+# Financial News Pipeline - Rendering Guide
+
+This guide explains how to replicate the news data collection and sentiment scoring pipeline.
+
+## 1. Environment Setup
+You will need Python 3.10+ and the following dependencies:
+```bash
+pip install requests beautifulsoup4 pandas tqdm torch transformers
+```
+
+## 2. Setup FinBERT Model
+Since the model is large (~440MB), it is not tracked in Git. You must clone it using Git LFS:
+
+1. Ensure Git LFS is installed on your machine.
+2. Run the following commands:
+   ```bash
+   cd models
+   git lfs install
+   git clone https://huggingface.co/ProsusAI/finbert
+   ```
+   *Note: This will create a `models/finbert` directory which the preprocessor expects.*
+
+## 3. Generate Raw Data (Scraping)
+Run the paginated scraper to fetch the news headlines. This targets the "Markets" category archives.
+
+```bash
+# Target January 2024 (adjust dates if needed)
+python scrapers/scrape_finance.py --start 2024-01-01 --end 2024-01-31 --max-pages 100
+```
+**Output**: `data/raw/news/financial_news_final.csv`
+
+## 4. Preprocess and Score (Sentiment Analysis)
+Run the preprocessing script. This will clean the text, deduplicate news items, and run the FinBERT model to generate sentiment scores.
+
+```bash
+# Run from the project root
+python pipeline/preprocess_finance.py --batch_size 32
+```
+**Output**: `data/raw/news/financial_news_scored.csv`
+
+## Troubleshooting
+- **SSL Errors**: If you get a certificate error while downloading, the `preprocess_finance.py` includes a bypass, but it is better to ensure the files are placed in `models/finbert` manually first.
+- **CUDA/GPU**: If you have an NVIDIA GPU, the script will automatically use it for 2-3x faster scoring.
