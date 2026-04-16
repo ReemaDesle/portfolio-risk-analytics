@@ -39,8 +39,8 @@ import pandas as pd
 import yfinance as yf
 
 
-DEFAULT_START_DATE = "2017-01-01"   # inclusive
-DEFAULT_END_DATE   = "2024-12-31"   # inclusive (yfinance end is exclusive, handled below)
+DEFAULT_START_DATE = "2026-03-20"   # inclusive
+DEFAULT_END_DATE   = "2026-04-15"   # inclusive (yfinance end is exclusive, handled below)
 
 # ──────────────────────────────────────────────
 # ❷  TICKER UNIVERSE
@@ -103,7 +103,7 @@ ALL_TICKERS = sorted({
 # ❸  OUTPUT DIRECTORY
 # ──────────────────────────────────────────────
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data", "raw")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data", "raw", "tickers")
 
 # ──────────────────────────────────────────────
 # Logging

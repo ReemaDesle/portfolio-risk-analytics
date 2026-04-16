@@ -23,7 +23,7 @@ Inputs
   data/raw/news/financial_news_scored.csv
   data/raw/news/geo_news_scored.csv
   data/raw/news/tech_news_scored.csv
-  data/raw/prices_daily.csv
+  data/raw/tickers/prices_daily.csv
 
 Outputs  →  data/processed/
 -------
@@ -51,7 +51,7 @@ warnings.filterwarnings("ignore")
 # ──────────────────────────────────────────────
 ROOT_DIR      = Path(__file__).resolve().parent.parent
 RAW_NEWS_DIR  = ROOT_DIR / "data" / "raw" / "news"
-RAW_DIR       = ROOT_DIR / "data" / "raw"
+RAW_DIR       = ROOT_DIR / "data" / "raw" / "tickers"
 PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 
 FINANCIAL_SCORED = RAW_NEWS_DIR / "financial_news_scored.csv"
