@@ -37,8 +37,14 @@ Tried 3-4 different approaches to bypass html page blockers - got imbalanced dat
 Direct pagination worked(Livemint still couldn't be scraped)
 Date column was left with placeholder, fixed that via news url
 
-Doubt: Will other news have to be scraped for the same timeframe as well? 
-       Will this scraped news work with already scraped techcrunch news?
+Doubt: Will other news have to be scraped for the same timeframe as well?-yes
+       Will this scraped news work with already scraped techcrunch news?-need to check the column headers
+
+16/04/26
+work done(Reema):
+1.made a combined script to scrape all the sources for common window (2026-03-20 to 2026-04-15)
+time required for all the scraping to be done: 09:48 to 
+2.cleaned unnecesary functions for gdelt,reuters etc from the scrape_news.py
 
 To do - 
 Formula analysis and refinement
