@@ -181,25 +181,27 @@ if __name__ == "__main__":
         all_results = []
         
         for i in tqdm(range(0, len(texts), bs), desc="Progress"):
-            batch = texts[i : i + bs]
-            res = score_batch(batch, tokenizer, model, "cpu")
-            all_results.extend(res)
+            batch_texts = texts[i : i + bs]
+            batch_res = score_batch(batch_texts, tokenizer, model, "cpu")
+            all_results.extend(batch_res)
             
-            # Save every 512 for safety
-            if len(all_results) >= 512:
-                chunk_df = df_todo.iloc[:len(all_results)].copy()
-                scored_df = pd.DataFrame(all_results)
-                final_chunk = pd.concat([chunk_df.reset_index(drop=True), scored_df], axis=1)
-                final_chunk.to_csv(out_p, mode='a', index=False, header=not os.path.exists(out_p))
+            # Periodic save (every 512 items) or if it's the last batch
+            if len(all_results) >= 512 or (i + bs) >= len(texts):
+                # The rows in df_todo correspond to the results currently in all_results
+                # all_results contains results for batches from (current i + bs - len(all_results)) to (i + bs)
+                num_to_save = len(all_results)
+                start_in_todo = (i + len(batch_texts)) - num_to_save
+                end_in_todo = (i + len(batch_texts))
                 
-                df_todo = df_todo.iloc[len(all_results):]
-                texts = texts[len(all_results):]
-                all_results = []
-        
-        if all_results:
-            chunk_df = df_todo.iloc[:len(all_results)].copy()
-            scored_df = pd.DataFrame(all_results)
-            final_chunk = pd.concat([chunk_df.reset_index(drop=True), scored_df], axis=1)
-            final_chunk.to_csv(out_p, mode='a', index=False, header=not os.path.exists(out_p))
+                chunk_df = df_todo.iloc[start_in_todo : end_in_todo].copy()
+                scored_df = pd.DataFrame(all_results)
+                
+                if len(chunk_df) == len(scored_df):
+                    final_chunk = pd.concat([chunk_df.reset_index(drop=True), scored_df], axis=1)
+                    final_chunk.to_csv(out_p, mode='a', index=False, header=not os.path.exists(out_p))
+                    all_results = []
+                else:
+                    # This should theoretically not happen with correct indexing
+                    pass
 
     robust_run(args.input, args.output, args.batch, args.limit)

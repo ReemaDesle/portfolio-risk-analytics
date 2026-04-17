@@ -1,0 +1,5 @@
+portfolio,mean_vol,shock_freq,beta_financial,beta_geopolitical,beta_technology,kmeans_cluster,kmeans_label
+geopolitical,0.03120291091044453,0.0,-0.0262,0.01,-0.1935,1,Tech-Reactive
+tech,0.02134770603925184,0.0,-0.0001,0.3729,0.1321,2,Balanced/Defensive
+balanced,0.011060000425818079,0.0,0.0035,0.2338,0.0197,2,Balanced/Defensive
+conservative,0.007205508792180446,0.05555555555555555,0.0007,0.0982,0.0489,0,Safe-Haven Heavy

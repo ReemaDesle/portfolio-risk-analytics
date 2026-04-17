@@ -90,7 +90,23 @@ work done(ash): 17/04/26
 
 to do: interpret test results
 
+work done 18/04/26
+(Reema)
+1.replaced hardcoded dates place holders with variables in clean_data.py and replaced with clean csv files for financial data
+2.ml model planning and testing on one month data-inferences:not enough data points-overfitting done
+3.map ml models to hypotheses 
 
+to do for 19/04/26:(reema):
+1. scrutanize the ml models and refine them
+2. map out and visualize basic frontend structure
+3.ml models make table for comparison - 
+what are the input CSVs? what will be the weightage for each?
+aim of the model?
+expected results?
+justification - based on intersection of EDA, statistical tests and goal
+feature engineering required
+4. run fetch prices for required dates
+5. look into requirements for xai
 
 output:
 13:29:06  INFO        COMPLETE
@@ -140,6 +156,8 @@ output -
 2.categorization of the person's portfolio
 3.suggestions for buy/sell along with reasoning
 4.suggestions for portfolio expansion
+(suggestions could be based on a ai or xai layer that has the input of the machine learning model's ouputs and gives suggestions and course of action for a layman)
 5.
+
 
 

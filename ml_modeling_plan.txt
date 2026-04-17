@@ -1,0 +1,26 @@
+Models to be used:
+M1 — Shock Classifier 
+This is a binary/multi-class classifier. The target label is whether a given stock-day is experiencing a shock or normal variance. You can derive the label from your volatility column using a threshold (e.g. volatility > 2 standard deviations from a rolling mean = shock).
+Best models: XGBoost or Random Forest. Features: log returns, rolling 5/10-day volatility, lagged sentiment scores for all 3 domains, news article count spikes. XGBoost will give you SHAP values later for free, which feeds your XAI layer. This directly answers H1 (geo sentiment as a feature weight).
+
+M2 — Recovery Predictor 
+This is a regression problem — predicting the number of days until volatility falls back within a normal range, conditional on being in a shock state. You only run this when M1 flags a shock.
+Best models: Gradient Boosting Regressor for a baseline, then try an LSTM if you have enough shock events in your data. The LSTM handles the sequential nature better — it can read the trajectory of sentiment decay alongside the price recovery. This answers H6 directly.
+
+M3 — Portfolio Risk Scorer 
+This is a continuous regression that produces a single risk score for the whole portfolio at time t. The target can be a portfolio-level volatility (weighted average of individual stock volatilities by holding size).
+Best models: Ridge Regression as baseline (interpretable coefficients map perfectly to SHAP), then a Multilayer Perceptron (MLP) for a non-linear version. The comparison between the two is itself a result — if the MLP significantly outperforms Ridge, your risk-sentiment relationship is non-linear, which is a finding worth reporting.
+
+M4 — Cross-Domain Lag Predictor 
+This is a time series causality problem. You want to know whether a geopolitical shock precedes a tech-sector shock, and by how many days.
+Use Granger Causality tests first — they're interpretable and directly answer "does domain A's sentiment cause domain B's volatility?" Then use Cross-Correlation Function (CCF) plots per domain pair to visualize the lag structure. If you want a trainable model, a Vector Autoregression (VAR) model treats all sentiment and volatility series jointly and estimates lag coefficients between them. This answers H4 and H5 in one shot.
+
+M5 — Sentiment-Volatility Regression 
+A multi-feature linear regression where each domain's sentiment is a separate input and stock volatility is the target. Running this with Lasso will automatically zero out less predictive domains. The surviving non-zero coefficients tell you which domain (geo/fin/tech) has the most predictive power per stock or portfolio type. This directly answers H5 and H2.
+
+M6 — Portfolio Clustering 
+This is unsupervised clustering on portfolios — you're grouping them by their sensitivity profile. Features per portfolio: average beta to each sentiment domain, shock frequency from M1, average recovery time from M2.
+Use K-Means (interpretable, easy to label clusters as "safe-haven heavy", "tech-reactive", "balanced") and validate with HDBSCAN which doesn't force every portfolio into a cluster and handles outlier portfolios. The cluster label becomes a key dashboard output and feeds the expansion suggestion logic.
+
+Feature engineering required:
+rolling windows · cross-domain lags · portfolio-level aggregations · z-score normalization
