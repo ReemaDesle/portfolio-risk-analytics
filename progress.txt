@@ -78,7 +78,7 @@ time required for all the scraping to be done: 11:10 to 11:38 (~30 minutes)
   8. how to get more volume of data to pass to the ml model?-(what is the ideal volume of data to be passed to the model?)
   9. scoring formulae breakdown for risk etc. how to make it better based on eda etc?
   
-work done(ash): 17/04/26
+work done(ash): 16/04/26
 
 1. cleaned project structure(scraper, scoring), deleted unnecesary txt files
 2. modified hardcoded dates in fetch_prices.py to match 2026 data.
@@ -90,13 +90,13 @@ work done(ash): 17/04/26
 
 to do: interpret test results
 
-work done 18/04/26
+work done 17/04/26
 (Reema)
 1.replaced hardcoded dates place holders with variables in clean_data.py and replaced with clean csv files for financial data
 2.ml model planning and testing on one month data-inferences:not enough data points-overfitting done
 3.map ml models to hypotheses 
 
-to do for 19/04/26:(reema):
+to do for 18/04/26:(reema):
 1. scrutanize the ml models and refine them
 2. map out and visualize basic frontend structure
 3.ml models make table for comparison - 
@@ -107,6 +107,17 @@ justification - based on intersection of EDA, statistical tests and goal
 feature engineering required
 4. run fetch prices for required dates
 5. look into requirements for xai
+
+work done(ash): 17/04/26
+1. Scraped data from 2021 to 2026 for tech and geo using hackernews(Algolia API)
+2. Ran sentiment analysis on geo news using finbert
+3. Rescraped fetch_prices with correct time frame
+4. Started scraping of financial news with web archive(test timeframe of 6 months taken)
+
+to do for 18/04/26(ash):
+1. finish financial news scraping for entire time frame
+2. run sentiment analysis on financial news
+3. create master_data.csv
 
 output:
 13:29:06  INFO        COMPLETE
