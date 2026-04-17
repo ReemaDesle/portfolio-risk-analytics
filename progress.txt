@@ -130,7 +130,16 @@ Data preprocessing
 ML pipeline
 
 Input/Output - 
-input by user - portfolio(from the timeframe of scraping)
+input by user - portfolio(from the timeframe of scraping)- choose from dropdown
 input from system - current scraped news(past 1 week)
 ML pipeline runs
-output - analysis and suggestions(on the basis of the results of ML pipeline)
+output - 
+1.analysis and suggestions(on the basis of the results of ML pipeline)
+ - every stock performance 
+ -correlation with given sentiments and strongest correlation found-suggest user what kind ofnews they should keep up with 
+2.categorization of the person's portfolio
+3.suggestions for buy/sell along with reasoning
+4.suggestions for portfolio expansion
+5.
+
+
