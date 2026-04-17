@@ -1,0 +1,38 @@
+ Statistical Validation: Results & Findings
+
+Date: 2026-04-17
+Dataset: master_data.csv (March-April 2026 window)
+
+ 1. Hypothesis 5: T-Test vs. Z-Proxy (Tech vs. Defensive Returns)
+Goal: Validate if the return difference between Tech and Defensive archetypes is statistically significant.
+
+   Population Z-Proxy (Wilcoxon Rank-Sum): 
+       Statistic: 1.3261
+       P-value: 0.1848
+   Sampling Analysis (Bootstrapped T-stat, n=5):
+       The sampling distribution shows that with small sample sizes, the results often fluctuate across the alpha=0.05 threshold.
+   Finding: The p-value of 0.1848 is greater than 0.05. We cannot reject the null hypothesis. While the Tech portfolio shows a trend of higher volatility/returns in the EDA, the difference is not statistically significant in this narrow 18-day window.
+
+ 2. Hypothesis 6: One-Way ANOVA (Cross-Portfolio Comparison)
+Goal: Check if 'Portfolio Archetype' significantly impacts returns across all groups.
+
+   F-Statistic: 0.7517
+   P-value: 0.5254
+   Finding: The high p-value (0.5254) suggests that the mean returns across Tech, Safe, Defensive, and Geo-Sensitive portfolios are not statistically distinct during this specific period. The sector archetypes behave similarly in terms of raw returns.
+
+ 3. Hypothesis 4: Chi-Square for Independence (News Risk vs. Market)
+Goal: Test if "High Risk News" and "Negative Market Directions" are coupled.
+
+   Contingency Table:
+       Low Risk News / Positive Market: 8 days
+       Low Risk News / Negative Market: 1 day
+       High Risk News / Positive Market: 5 days
+       High Risk News / Negative Market: 4 days
+   Chi-Square Statistic: 1.1077
+   P-value: 0.2926
+   Finding: At p=0.29, we do not find a strong statistical dependency between Geopolitical risk sentiment and immediate market direction for this sample. 
+
+ Final Conclusion
+While the Exploratory Data Analysis (EDA) showed clear visual trends (e.g., Tech sensitivity and Geopolitical correlation), the Statistical Validation indicates that with the current sample size (n=18), these trends have not yet reached the threshold of statistical significance.
+
+Recommendation: Increase the observation window (more historical data) to confirm if these signals persist and strengthen to provide better predictive footing for forecasting models.
