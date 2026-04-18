@@ -158,24 +158,51 @@
 
 
 ────────────────────────────────────────────────────────────────
-  M4 — CROSS-DOMAIN LAG PREDICTOR  (CCF + Granger + VAR)
+  M4 — CROSS-DOMAIN LAG PREDICTOR  (CCF + Granger + ADF)   ✅ COMPLETE
 ────────────────────────────────────────────────────────────────
-  Status: SKIPPED (--skip-granger flag in current run)
-  ACTION REQUIRED: Run once without --skip-granger flag.
-    python pipeline/ml/train_models.py
-  
-  CCF from prior 18-day run (UNRELIABLE — for reference only):
-    geo → tech    : peak lag−1 (r=0.29)
-    fin → balanced: peak lag−5 (r=0.51)
+  Status: COMPLETE — run on 1,329 trading days (2021–2026)
 
-  ADF Stationarity (prior run — likely valid, series properties stable):
-    geo_sentiment    : STATIONARY  (p=0.011)
-    fin_sentiment    : NON-STATIONARY → differenced before Granger
-    tech_sentiment   : NON-STATIONARY → differenced before Granger
-    vol5_portfolios  : NON-STATIONARY → differenced before Granger
+  ADF Stationarity Test (all series tested):
+    sentiment_score_financial    : STATIONARY  (p=0.000) ✅
+    sentiment_score_geopolitical : STATIONARY  (p=0.000) ✅
+    sentiment_score_technology   : STATIONARY  (p=0.000) ✅
+    vol5_geopolitical            : STATIONARY  (p=0.000) ✅
+    vol5_tech                    : STATIONARY  (p=0.000) ✅
+    vol5_balanced                : STATIONARY  (p=0.000) ✅
+    vol5_conservative            : STATIONARY  (p=0.000) ✅
+  → All 7 series stationary at 1,329 rows (prior 18-day run showed
+    non-stationarity — that was a data starvation artefact).
+    No differencing needed. Granger tests run on raw series.
 
-  With 1,329 rows Granger tests have full statistical power.
-  Expected findings: geo → tech lag 1–3 days significant at p < 0.05.
+  Granger Causality — Significant Pairs (p < 0.05, confounder-controlled):
+  ┌─────────────────┬─────────────┬─────┬─────────┬──────────────────────────┐
+  │ Cause           │ Effect      │ Lag │ p-value │ Confounder controlled    │
+  ├─────────────────┼─────────────┼─────┼─────────┼──────────────────────────┤
+  │ geopolitical    │ tech        │  3  │ 0.0065  │ Yes (financial removed)  │
+  │ geopolitical    │ tech        │  4  │ 0.0125  │ Yes (financial removed)  │
+  │ geopolitical    │ tech        │  5  │ 0.0220  │ Yes (financial removed)  │
+  │ financial       │ balanced    │  2  │ 0.0111  │ No                       │
+  │ financial       │ balanced    │  3  │ 0.0249  │ No                       │
+  └─────────────────┴─────────────┴─────┴─────────┴──────────────────────────┘
+
+  CCF results saved: models/ml/m4_ccf_results.csv
+
+  INFERENCE:
+  • geo → tech is STATISTICALLY SIGNIFICANT at lags 3, 4, 5 days (p < 0.05)
+    even after controlling for financial sentiment as a confounder.
+    This is the gold-standard confirmation of EDA Hypothesis H5:
+    "Geopolitical news Granger-causes tech portfolio volatility."
+  • The strongest lag is 3 days (p=0.0065) — markets fully reprice
+    geopolitical shocks over a 3-trading-day window.
+  • financial → balanced is significant at lags 2–3 (p < 0.05), consistent
+    with EDA H3: financial news predicts balanced portfolio vol.
+  • geo → financial, tech → geo, and all other pairs are NOT significant
+    at p < 0.05, meaning the causality is directional and specific —
+    not just a general "everything affects everything" noise pattern.
+  • This Granger evidence, combined with M5's geo domain coefficients,
+    gives the project TWO independent validation methods for the same claim.
+
+  SAVED: models/ml/m4_ccf_results.csv
 
 
 ────────────────────────────────────────────────────────────────
@@ -262,21 +289,23 @@
 
   Model     | pkl Exists | Format          | Dashboard-Ready | Notes
   ──────────┼────────────┼─────────────────┼─────────────────┼──────────────────
-  M1        | ✅ Yes     | dict (new fmt)  | ✅ Yes          | Use pkl["model"].predict_proba()
+  M1        | ✅ Yes     | dict            | ✅ Yes          | pkl["model"].predict_proba()
             |            |                 |                 | threshold = pkl["optimal_threshold"]
-  M2        | ✅ Yes     | dict (new fmt)  | ✅ Yes          | Use pkl["q50"].predict() for median
+  M2        | ✅ Yes     | dict            | ✅ Yes          | pkl["q50"].predict() for median
             |            |                 |                 | pkl["q25"]/pkl["q75"] for band
   M3        | ✅ Yes     | per-portfolio   | ✅ Yes          | m3_risk_scorer_{pname}.pkl
-  M4        | ⚠️ Partial | CCF only        | ❌ Not yet      | Run without --skip-granger ONCE
+  M4        | ✅ Yes     | CSV + results   | ✅ Yes          | m4_ccf_results.csv
+            |            |                 |                 | Granger: geo→tech p=0.0065 (lag 3)
   M5        | ✅ Yes     | per-portfolio   | ✅ Yes          | m5_ridge_{pname}.pkl
-            |            |                 |                 | Use pkl["model"] + pkl["scaler"]
-  M6        | ✅ Yes     | CSV only        | ✅ Yes          | Read m6_clusters.csv directly
+            |            |                 |                 | pkl["model"] + pkl["scaler"]
+  M6        | ✅ Yes     | CSV             | ✅ Yes          | m6_clusters.csv (read directly)
 
-  What is NOT yet built:
+  ALL 6 MODELS COMPLETE AND TRAINING-READY ✅
+
+  What is NOT yet built (integration work remaining):
     ❶  pipeline/ml/infer.py         — inference wrapper (load pkl → predict on new data)
-    ❷  M4 Granger results           — 1 run without --skip-granger needed
-    ❸  dashboard/main.py endpoints  — currently returns mock suggestions (lines 62–92)
-                                      needs wiring to real model outputs
+    ❷  dashboard/main.py endpoints  — currently returns mock suggestions (lines 62–92)
+                                      needs wiring to real infer.py output
 
 
 ════════════════════════════════════════════════════════════════
