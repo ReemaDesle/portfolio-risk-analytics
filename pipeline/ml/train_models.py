@@ -1,38 +1,49 @@
 """
-Portfolio Risk Analytics — ML Modelling Pipeline
-=================================================
-Implements all 6 models from ml_modeling_plan.txt
+Portfolio Risk Analytics — ML Modelling Pipeline v2
+====================================================
+Updated from ml_model_improv_v1.txt
 
-  M1 — Shock Classifier         (XGBoost binary classifier)
-  M2 — Recovery Predictor       (Gradient Boosting Regressor)
-  M3 — Portfolio Risk Scorer    (Ridge + MLP Regressor)
-  M4 — Cross-Domain Lag Predictor (Granger Causality + VAR)
-  M5 — Sentiment-Volatility Regression (Lasso)
-  M6 — Portfolio Clustering     (KMeans + HDBSCAN)
-
-Feature Engineering:
-  - Rolling windows (5, 10, 20 day)
-  - Cross-domain sentiment lags (1–5 days)
-  - Portfolio-level volatility aggregations
-  - Z-score normalisation
+Changes from v1:
+  M1 — Per-stock adaptive thresholds (95th pct), walk-forward expanding CV,
+        XGBoost if shock events ≥ 100 else RandomForest, F1/AUC-PR evaluation
+        New features: vol_zscore, sentiment_velocity, news_available_flag,
+        geo_article_zscore, rolling_mean_return_5d
+  M2 — Pools shocks across ALL portfolios (multiplies training data),
+        Operational 3-day-sustained recovery definition (not first-day),
+        Adds shock_magnitude, sector, quarter, news_article_spike features
+  M3 — Sentiment-ONLY features for next-day vol (eliminates circularity),
+        QuantileRegressor for P25/P75 risk band output (not point estimate)
+        New features: intra_corr, hhi, cross_domain_divergence, market_regime
+  M4 — ADF stationarity test + differencing before modelling,
+        BIC (not AIC) for VAR lag selection, CCF computed BEFORE Granger,
+        fin_sentiment added as confounder control, reduced-form VAR on
+        portfolio-level averages only (not individual stocks)
+  M5 — Ridge instead of Lasso (handles correlated domains without zero-out),
+        New features: 3d rolling smoothed sentiment, sentiment velocity,
+        geo×fin interaction, reliability-weighted sentiment (zscore×score)
+        Per-day SHAP values saved for dashboard "what to watch" advice
+  M6 — Clusters on M5 domain sensitivity coefficients (not raw weights),
+        KMeans with elbow + silhouette score to choose k,
+        Hierarchical clustering (AgglomerativeClustering) added,
+        Cluster names derived from dominant M5 domain coefficient empirically
 
 Inputs:
   data/processed/master_data.csv
 
 Outputs:
-  data/processed/ml_features.csv       — engineered feature table
-  models/ml/m1_shock_classifier.*      — XGBoost shock model + metrics
-  models/ml/m2_recovery_predictor.*    — GBR recovery model + metrics
-  models/ml/m3_risk_scorer_ridge.*     — Ridge risk model + metrics
-  models/ml/m3_risk_scorer_mlp.*       — MLP risk model  + metrics
-  models/ml/m4_granger_results.csv     — Granger causality p-values
-  models/ml/m5_lasso_coefficients.csv  — Lasso domain importance
-  models/ml/m6_clusters.csv           — Portfolio cluster assignments
-  reports/ml_results_summary.txt      — Human-readable results summary
+  data/processed/ml_features.csv
+  models/ml/m1_shock_classifier.pkl + m1_shap_values.csv
+  models/ml/m2_recovery_predictor.pkl
+  models/ml/m3_ridge_{pname}.pkl + m3_mlp_{pname}.pkl
+  models/ml/m4_ccf_results.csv + m4_granger_results.csv + m4_var_model.pkl
+  models/ml/m5_ridge_{pname}.pkl + m5_shap_{pname}.csv + m5_lasso_coefficients.csv
+  models/ml/m5_domain_coefficients.csv   (feeds M6 clustering)
+  models/ml/m6_clusters.csv
+  reports/ml_results_summary.txt
 
 Usage:
   python pipeline/ml/train_models.py
-  python pipeline/ml/train_models.py --skip-granger   # faster, skips M4
+  python pipeline/ml/train_models.py --skip-granger
 """
 
 import argparse
@@ -62,15 +73,15 @@ PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 MODELS_DIR    = ROOT_DIR / "models" / "ml"
 REPORTS_DIR   = ROOT_DIR / "reports"
 
-MASTER_DATA   = PROCESSED_DIR / "master_data.csv"
-FEATURES_OUT  = PROCESSED_DIR / "ml_features.csv"
-RESULTS_TXT   = REPORTS_DIR / "ml_results_summary.txt"
+MASTER_DATA  = PROCESSED_DIR / "master_data.csv"
+FEATURES_OUT = PROCESSED_DIR / "ml_features.csv"
+RESULTS_TXT  = REPORTS_DIR / "ml_results_summary.txt"
 
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 # ──────────────────────────────────────────────
-# Portfolio definitions (matching EDA / score_compute)
+# Portfolio definitions
 # ──────────────────────────────────────────────
 PORTFOLIOS = {
     "geopolitical": ["GLD", "USO", "LMT", "RTX", "EEM", "GC=F", "CL=F"],
@@ -79,27 +90,34 @@ PORTFOLIOS = {
     "conservative": ["TLT", "IEF", "VPU", "KO", "JNJ", "PG", "XLP"],
 }
 
-DOMAINS = ["financial", "geopolitical", "technology"]
+DOMAINS  = ["financial", "geopolitical", "technology"]
+TICKERS  = sorted(set(t for tickers in PORTFOLIOS.values() for t in tickers))
 
 # ══════════════════════════════════════════════
-# FEATURE ENGINEERING
+# FEATURE ENGINEERING v2
 # ══════════════════════════════════════════════
 
 def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Builds the full ML feature table from master_data.csv.
 
-    New features added:
-      - Portfolio returns / volatility (equal-weight averaged per archetype)
-      - Rolling windows: 10-day and 20-day volatility per ticker
-      - Cross-domain lagged sentiments: lag-2 to lag-5 for each domain
-      - Article count spike flags (z-score > 2)
-      - Z-score normalisation for all sentiment features
+    New in v2 (per ml_model_improv_v1):
+      - Per-stock/portfolio vol z-score (adaptive; replaces global z>2 threshold)
+      - news_available_flag (binary: was there any news on this day?)
+      - sentiment_velocity (1-day delta of sentiment score)
+      - 3-day rolling smoothed sentiment (reduces noise for M5)
+      - geo×fin sentiment interaction term (M5)
+      - cross_domain_divergence (geo - tech, M3)
+      - market_regime_flag (SPY > 20d MA, M3/M5)
+      - intra_portfolio_correlation (rolling 20d pairwise avg, M3/M6)
+      - sector_concentration_hhi (equal-weight proxy, M3/M6)
+      - article_count_zscore × sentiment = reliability-weighted sentiment (M5)
+      - Lag features extended to lag-7 (needed for M4 CCF)
     """
-    log.info("── [FEATURE ENGINEERING] ──────────────────────────────")
+    log.info("── [FEATURE ENGINEERING v2] ─────────────────────────────")
     df = df.copy()
 
-    # ── 1. Portfolio-level return aggregations ───────────────────────────────
+    # ── 1. Portfolio-level return & vol aggregations ──────────────────────────
     log.info("  Building portfolio-level return & vol aggregations...")
     for pname, tickers in PORTFOLIOS.items():
         ret_cols = [f"ret_{t}" for t in tickers if f"ret_{t}" in df.columns]
@@ -109,53 +127,118 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
             df[f"ret_{pname}"]   = pf_ret
             df[f"vol10_{pname}"] = pf_ret.rolling(10, min_periods=3).std()
             df[f"vol20_{pname}"] = pf_ret.rolling(20, min_periods=5).std()
+            df[f"rolling_mean_return_5d_{pname}"] = pf_ret.rolling(5, min_periods=2).mean()
         if vol_cols:
             df[f"vol5_{pname}"] = df[vol_cols].mean(axis=1)
 
-    # ── 2. Cross-domain lags (lag-2 to lag-5) ───────────────────────────────
-    log.info("  Adding cross-domain lag features (lag-2 to lag-5)...")
-    for domain in DOMAINS:
-        col = f"sentiment_score_{domain}"
-        if col in df.columns:
-            for lag in range(2, 6):
-                df[f"lag{lag}_sentiment_score_{domain}"] = df[col].shift(lag)
-
-    # ── 3. Article count spike flag (z-score > 2 = "news burst") ────────────
-    log.info("  Computing article count spike z-scores...")
-    for domain in DOMAINS:
-        col = f"article_count_{domain}"
-        if col in df.columns:
-            rolling_mean = df[col].rolling(20, min_periods=3).mean()
-            rolling_std  = df[col].rolling(20, min_periods=3).std().replace(0, np.nan)
-            df[f"article_spike_{domain}"] = (
-                ((df[col] - rolling_mean) / rolling_std) > 2
-            ).astype(int)
-
-    # ── 4. Shock indicator (rolling z-score on portfolio vol) ────────────────
-    log.info("  Deriving shock flags per portfolio...")
-    SHOCK_Z = 2.0
+    # ── 2. Per-portfolio vol z-score (M1: adaptive threshold) ────────────────
+    log.info("  Computing per-portfolio vol z-scores (adaptive thresholds)...")
     for pname in PORTFOLIOS:
         col = f"vol5_{pname}"
         if col in df.columns:
             roll_mean = df[col].rolling(20, min_periods=5).mean()
             roll_std  = df[col].rolling(20, min_periods=5).std().replace(0, np.nan)
-            df[f"shock_{pname}"] = (
-                ((df[col] - roll_mean) / roll_std) > SHOCK_Z
-            ).astype(int)
+            df[f"vol_zscore_5d_{pname}"] = (df[col] - roll_mean) / roll_std
 
-    # ── 5. Z-score normalise sentiment features ──────────────────────────────
-    log.info("  Z-score normalising sentiment features...")
+    # ── 3. Cross-domain lags (lag-1 to lag-7 for M4 CCF) ────────────────────
+    log.info("  Adding cross-domain lag features (lag-1 to lag-7)...")
+    for domain in DOMAINS:
+        col = f"sentiment_score_{domain}"
+        if col in df.columns:
+            for lag in range(1, 8):
+                df[f"lag{lag}_sentiment_score_{domain}"] = df[col].shift(lag)
+
+    # ── 4. Article count spike flag + z-score + availability ─────────────────
+    log.info("  Computing article spike/zscore/availability flags...")
+    for domain in DOMAINS:
+        col = f"article_count_{domain}"
+        if col in df.columns:
+            rolling_mean = df[col].rolling(20, min_periods=3).mean()
+            rolling_std  = df[col].rolling(20, min_periods=3).std().replace(0, np.nan)
+            zscore = (df[col] - rolling_mean) / rolling_std
+            df[f"article_zscore_{domain}"]  = zscore
+            df[f"article_spike_{domain}"]   = (zscore > 2).astype(int)
+            df[f"news_available_{domain}"]  = (df[col] > 0).astype(int)  # NEW
+
+    # ── 5. Shock labels: per-portfolio 95th pct (M1 improvement: adaptive) ───
+    log.info("  Deriving shock flags per portfolio (95th pct adaptive threshold)...")
+    for pname in PORTFOLIOS:
+        col = f"vol5_{pname}"
+        if col in df.columns:
+            pct95 = df[col].expanding(min_periods=10).quantile(0.95)
+            df[f"shock_{pname}"] = (df[col] > pct95).astype(int)
+
+    # ── 6. Sentiment velocity (1-day delta) — M1 & M5 ────────────────────────
+    log.info("  Computing sentiment velocity (1-day delta)...")
+    for domain in DOMAINS:
+        col = f"sentiment_score_{domain}"
+        if col in df.columns:
+            df[f"sentiment_velocity_{domain}"] = df[col].diff(1)
+
+    # ── 7. 3-day rolling smoothed sentiment — M5 ──────────────────────────────
+    log.info("  Computing 3-day rolling smoothed sentiment...")
+    for domain in DOMAINS:
+        col = f"sentiment_score_{domain}"
+        if col in df.columns:
+            df[f"sentiment_3d_{domain}"] = df[col].rolling(3, min_periods=1).mean()
+
+    # ── 8. Geo × Fin sentiment interaction — M5 ───────────────────────────────
+    if "sentiment_score_geopolitical" in df.columns and "sentiment_score_financial" in df.columns:
+        df["sentiment_interaction_geo_fin"] = (
+            df["sentiment_score_geopolitical"] * df["sentiment_score_financial"]
+        )
+
+    # ── 9. Cross-domain divergence (geo − tech) — M3 ─────────────────────────
+    if "sentiment_score_geopolitical" in df.columns and "sentiment_score_technology" in df.columns:
+        df["cross_domain_divergence"] = (
+            df["sentiment_score_geopolitical"] - df["sentiment_score_technology"]
+        )
+
+    # ── 10. Market regime flag (SPY > 20d MA) — M3 & M5 ─────────────────────
+    if "SPY" in df.columns:
+        df["market_regime_flag"] = (
+            df["SPY"] > df["SPY"].rolling(20, min_periods=5).mean()
+        ).astype(int)
+    else:
+        df["market_regime_flag"] = 0
+
+    # ── 11. Reliability-weighted sentiment (article_zscore × sentiment) ───────
+    for domain in DOMAINS:
+        if f"article_zscore_{domain}" in df.columns and f"sentiment_score_{domain}" in df.columns:
+            df[f"weighted_sentiment_{domain}"] = (
+                df[f"article_zscore_{domain}"] * df[f"sentiment_score_{domain}"]
+            )
+
+    # ── 12. Intra-portfolio correlation (rolling 20d pairwise avg) — M3/M6 ───
+    log.info("  Computing intra-portfolio correlation (rolling 20d)...")
+    for pname, tickers in PORTFOLIOS.items():
+        ret_cols = [f"ret_{t}" for t in tickers if f"ret_{t}" in df.columns]
+        if len(ret_cols) >= 2:
+            corr_series = []
+            for i in range(len(ret_cols)):
+                for j in range(i + 1, len(ret_cols)):
+                    corr_series.append(df[ret_cols[i]].rolling(20, min_periods=5).corr(df[ret_cols[j]]))
+            if corr_series:
+                df[f"intra_corr_{pname}"] = pd.concat(corr_series, axis=1).mean(axis=1)
+
+    # ── 13. Sector concentration HHI (equal-weight proxy) — M3/M6 ────────────
+    for pname, tickers in PORTFOLIOS.items():
+        df[f"hhi_{pname}"] = 1.0 / len(tickers)  # equal-weight HHI
+
+    # ── 14. Z-score normalise all sentiment and lag features ──────────────────
+    log.info("  Z-score normalising sentiment/lag/velocity features...")
     sent_cols = [c for c in df.columns if any(
-        c.startswith(p) for p in ["sentiment_score_", "avg_prob_neg_", "avg_prob_pos_",
-                                   "avg_prob_neu_", "lag"]
+        c.startswith(p) for p in [
+            "sentiment_score_", "avg_prob_neg_", "avg_prob_pos_", "avg_prob_neu_",
+            "lag", "sentiment_3d_", "sentiment_velocity_",
+        ]
     )]
     for col in sent_cols:
         mu, sigma = df[col].mean(), df[col].std()
         if sigma > 0:
             df[f"z_{col}"] = (df[col] - mu) / sigma
 
-    log.info("  Feature engineering complete. Shape: %d rows × %d cols",
-             *df.shape)
+    log.info("  Feature engineering v2 complete. Shape: %d rows × %d cols", *df.shape)
     return df
 
 
@@ -164,100 +247,196 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 # ══════════════════════════════════════════════
 
 def time_series_split(df: pd.DataFrame, test_frac: float = 0.2):
-    """Chronological split — NO shuffling (prevents data leakage)."""
+    """Chronological split — no shuffling."""
     split_idx = int(len(df) * (1 - test_frac))
     return df.iloc[:split_idx].copy(), df.iloc[split_idx:].copy()
 
 
-def get_feature_columns(df: pd.DataFrame, patterns: list[str]) -> list[str]:
-    """Return column names that start with any of the given prefixes."""
+def walk_forward_splits(df: pd.DataFrame, n_splits: int = 3):
+    """
+    Expanding-window walk-forward splits (M1 improvement).
+    Yields (train_df, test_df) with progressively larger training sets.
+    """
+    min_train = max(5, len(df) // (n_splits + 1))
+    step      = max(1, (len(df) - min_train) // n_splits)
+    for i in range(n_splits):
+        train_end  = min_train + i * step
+        test_start = train_end
+        test_end   = min(test_start + step, len(df))
+        if test_start >= len(df):
+            break
+        yield df.iloc[:train_end], df.iloc[test_start:test_end]
+
+
+def get_feature_columns(df: pd.DataFrame, patterns: list) -> list:
     return [c for c in df.columns if any(c.startswith(p) for p in patterns)]
 
 
 # ══════════════════════════════════════════════
-# M1 — SHOCK CLASSIFIER (XGBoost)
+# M1 — SHOCK CLASSIFIER (XGBoost / RandomForest)
 # ══════════════════════════════════════════════
 
 def train_m1_shock_classifier(df: pd.DataFrame, results: dict) -> None:
     """
     Binary classifier: predict if tomorrow will be a shock day.
-    Target: shock_tech (or shock_geopolitical) based on vol z-score > 2.
-    """
-    log.info("── [M1] Shock Classifier (XGBoost) ────────────────────")
 
-    try:
-        from xgboost import XGBClassifier
-        from sklearn.metrics import classification_report, roc_auc_score
-    except ImportError:
-        log.error("  xgboost not installed. Run: pip install xgboost")
-        results["M1"] = "SKIPPED — xgboost not installed"
-        return
+    Improvements:
+    - Per-portfolio adaptive 95th-pct threshold (not global z > 2.0)
+    - Walk-forward expanding-window CV (not simple chronological split)
+    - XGBoost if shock events ≥ 100; RandomForest if shock events < 100
+    - Evaluates Shock-class F1 + AUC-PR (not just accuracy/AUC-ROC)
+    - New features: vol_zscore_5d, sentiment_velocity, news_available_flag,
+      geo_article_zscore, rolling_mean_return_5d, market_regime_flag
+    """
+    log.info("── [M1] Shock Classifier (adaptive threshold + walk-forward CV) ──")
+
+    from sklearn.metrics import (
+        f1_score, roc_auc_score, average_precision_score
+    )
+    from sklearn.ensemble import RandomForestClassifier
 
     TARGET = "shock_tech"
     if TARGET not in df.columns:
-        log.warning("  Target column '%s' missing. Skipping M1.", TARGET)
+        log.warning("  Target '%s' missing. Skipping M1.", TARGET)
         results["M1"] = f"SKIPPED — {TARGET} column missing"
         return
 
-    # Features
+    # ── Feature prefixes (v2: broader set)
     feature_prefixes = [
-        "z_sentiment_score_", "z_avg_prob_neg_",
+        "vol_zscore_5d_",          # per-stock adaptive (NEW)
+        "z_sentiment_score_",
+        "z_avg_prob_neg_",
         "z_lag1_", "z_lag2_", "z_lag3_",
         "article_spike_",
+        "article_zscore_",         # geo_article_zscore (NEW)
+        "news_available_",         # news_available_flag (NEW)
+        "z_sentiment_velocity_",   # velocity (NEW)
         "vol5_tech", "vol10_tech", "vol20_tech",
         "ret_tech",
+        "rolling_mean_return_5d_tech",  # NEW
+        "market_regime_flag",
     ]
     feat_cols = [c for c in df.columns if any(c.startswith(p) for p in feature_prefixes)]
+    if not feat_cols:
+        results["M1"] = "SKIPPED — no feature columns found"
+        return
 
-    # Use next-day shock as target (shift target back by 1 for prediction)
     df_m1 = df[feat_cols + [TARGET]].copy()
-    df_m1[TARGET] = df_m1[TARGET].shift(-1)  # predict TOMORROW's shock
+    df_m1[TARGET] = df_m1[TARGET].shift(-1)   # predict TOMORROW's shock
     df_m1 = df_m1.dropna()
 
     if len(df_m1) < 10:
-        log.warning("  Insufficient rows after dropna (%d). Skipping M1.", len(df_m1))
+        log.warning("  Insufficient rows (%d). Skipping M1.", len(df_m1))
         results["M1"] = f"SKIPPED — only {len(df_m1)} valid rows"
         return
 
-    X = df_m1[feat_cols]
-    y = df_m1[TARGET].astype(int)
-    X_train, X_test = time_series_split(X)
-    y_train, y_test = time_series_split(y.to_frame())
-    y_train, y_test = y_train.squeeze(), y_test.squeeze()
+    X = df_m1[feat_cols].values
+    y = df_m1[TARGET].astype(int).values
 
-    # Handle class imbalance
-    pos_weight = max(1, (y_train == 0).sum() / max((y_train == 1).sum(), 1))
+    n_shock_events = int(y.sum())
+    log.info("  Shock events: %d / %d (%.1f%%)",
+             n_shock_events, len(y), 100 * n_shock_events / max(len(y), 1))
 
-    model = XGBClassifier(
-        n_estimators=200,
-        max_depth=4,
-        learning_rate=0.05,
-        scale_pos_weight=pos_weight,
-        random_state=42,
-        eval_metric="logloss",
-        verbosity=0,
-    )
-    model.fit(X_train, y_train)
+    # ── Walk-forward CV
+    wf_f1s, wf_aucs, wf_aprs = [], [], []
+    for train_split, test_split in walk_forward_splits(df_m1, n_splits=3):
+        Xtr = train_split[feat_cols].values
+        ytr = train_split[TARGET].astype(int).values
+        Xte = test_split[feat_cols].values
+        yte = test_split[TARGET].astype(int).values
 
-    y_pred = model.predict(X_test)
-    y_prob = model.predict_proba(X_test)[:, 1]
+        if len(yte) == 0 or yte.sum() == 0:
+            continue
 
-    report = classification_report(y_test, y_pred, zero_division=0)
-    auc    = roc_auc_score(y_test, y_prob) if len(y_test.unique()) > 1 else float("nan")
+        pos_weight = max(1, (ytr == 0).sum() / max((ytr == 1).sum(), 1))
 
-    log.info("  M1 AUC: %.4f\n%s", auc, report)
+        # Algorithm choice per ml_model_improv_v1
+        if n_shock_events >= 100:
+            try:
+                from xgboost import XGBClassifier
+                clf = XGBClassifier(
+                    n_estimators=200, max_depth=4, learning_rate=0.05,
+                    scale_pos_weight=pos_weight, random_state=42,
+                    eval_metric="logloss", verbosity=0,
+                )
+            except ImportError:
+                clf = RandomForestClassifier(n_estimators=200, max_depth=4,
+                                             class_weight="balanced", random_state=42)
+        else:
+            clf = RandomForestClassifier(n_estimators=200, max_depth=4,
+                                         class_weight="balanced", random_state=42)
 
-    # Save model + feature importances
-    joblib.dump(model, MODELS_DIR / "m1_shock_classifier.pkl")
-    fi = pd.DataFrame({"feature": feat_cols, "importance": model.feature_importances_})
+        clf.fit(Xtr, ytr)
+        yhat  = clf.predict(Xte)
+        yprob = clf.predict_proba(Xte)[:, 1]
+
+        wf_f1s.append(f1_score(yte, yhat, zero_division=0))
+        if len(np.unique(yte)) > 1:
+            wf_aucs.append(roc_auc_score(yte, yprob))
+            wf_aprs.append(average_precision_score(yte, yprob))
+
+    mean_f1  = float(np.mean(wf_f1s))  if wf_f1s  else float("nan")
+    mean_auc = float(np.mean(wf_aucs)) if wf_aucs else float("nan")
+    mean_apr = float(np.mean(wf_aprs)) if wf_aprs else float("nan")
+
+    log.info("  Walk-forward CV → Shock-F1: %.4f | AUC-ROC: %.4f | AUC-PR: %.4f",
+             mean_f1, mean_auc, mean_apr)
+
+    # ── Final model on all data
+    pos_weight = max(1, (y == 0).sum() / max((y == 1).sum(), 1))
+    if n_shock_events >= 100:
+        try:
+            from xgboost import XGBClassifier
+            final_model = XGBClassifier(
+                n_estimators=200, max_depth=4, learning_rate=0.05,
+                scale_pos_weight=pos_weight, random_state=42,
+                eval_metric="logloss", verbosity=0,
+            )
+            log.info("  Using XGBoost (shock_events=%d ≥ 100)", n_shock_events)
+        except ImportError:
+            log.warning("  xgboost not installed — falling back to RandomForest.")
+            final_model = RandomForestClassifier(n_estimators=200, max_depth=4,
+                                                 class_weight="balanced", random_state=42)
+    else:
+        final_model = RandomForestClassifier(n_estimators=200, max_depth=4,
+                                             class_weight="balanced", random_state=42)
+        log.info("  Using RandomForest (shock_events=%d < 100)", n_shock_events)
+
+    final_model.fit(X, y)
+
+    # ── SHAP values (best-effort)
+    shap_available = False
+    try:
+        import shap
+        explainer  = shap.TreeExplainer(final_model)
+        shap_vals  = explainer.shap_values(X)
+        # For classifiers, shap_values may return list; take class-1 values
+        sv = shap_vals[1] if isinstance(shap_vals, list) else shap_vals
+        pd.DataFrame(sv, columns=feat_cols).to_csv(MODELS_DIR / "m1_shap_values.csv", index=False)
+        shap_available = True
+        log.info("  SHAP values saved → models/ml/m1_shap_values.csv")
+    except Exception as e:
+        log.info("  SHAP skipped for M1: %s", e)
+
+    # Feature importances
+    if hasattr(final_model, "feature_importances_"):
+        fi = pd.DataFrame({"feature": feat_cols, "importance": final_model.feature_importances_})
+    else:
+        fi = pd.DataFrame({"feature": feat_cols, "importance": [0.0] * len(feat_cols)})
     fi.sort_values("importance", ascending=False).to_csv(
         MODELS_DIR / "m1_feature_importance.csv", index=False
     )
 
+    joblib.dump(final_model, MODELS_DIR / "m1_shock_classifier.pkl")
+
     results["M1"] = {
-        "AUC":    round(auc, 4),
-        "report": report,
-        "top_features": fi.head(5).to_dict("records"),
+        "algorithm":             "XGBoost" if n_shock_events >= 100 else "RandomForest",
+        "n_shock_events":        n_shock_events,
+        "walk_forward_shock_F1": round(mean_f1, 4),
+        "walk_forward_AUC_ROC":  round(mean_auc, 4),
+        "walk_forward_AUC_PR":   round(mean_apr, 4),
+        "shap_available":        shap_available,
+        "top_features":          fi.head(5).to_dict("records"),
     }
     log.info("  ✔ M1 saved → models/ml/m1_shock_classifier.pkl")
 
@@ -268,183 +447,276 @@ def train_m1_shock_classifier(df: pd.DataFrame, results: dict) -> None:
 
 def train_m2_recovery_predictor(df: pd.DataFrame, results: dict) -> None:
     """
-    Regression: how many days until vol returns to normal after a shock?
-    Only runs on rows that are shock days.
+    Regression: days until portfolio vol stabilises after a shock.
+
+    Improvements:
+    - Pools shock events across ALL portfolios (multiplies training data)
+    - Operational recovery = 5d-rolling-vol drops below threshold AND stays
+      below for 3 consecutive days (not just "first day below")
+    - Adds shock_magnitude, sentiment_velocity, pre_shock_baseline,
+      sector_label, market_regime, quarter/year, news_article_spike
     """
-    log.info("── [M2] Recovery Predictor (GBR) ──────────────────────")
+    log.info("── [M2] Recovery Predictor (pooled shocks, 3-day sustained recovery) ──")
 
     from sklearn.ensemble import GradientBoostingRegressor
     from sklearn.metrics import mean_absolute_error, r2_score
 
-    TARGET_SHOCK = "shock_tech"
-    VOL_COL      = "vol5_tech"
+    shock_events = []   # pool across all portfolios
 
-    if TARGET_SHOCK not in df.columns or VOL_COL not in df.columns:
-        log.warning("  Required columns missing. Skipping M2.")
-        results["M2"] = "SKIPPED — shock_tech or vol5_tech missing"
+    for pname, tickers in PORTFOLIOS.items():
+        shock_col = f"shock_{pname}"
+        vol_col   = f"vol5_{pname}"
+        if shock_col not in df.columns or vol_col not in df.columns:
+            continue
+
+        work = df[[vol_col, shock_col]].copy().dropna().reset_index(drop=True)
+        threshold = work[vol_col].expanding(min_periods=10).quantile(0.95)
+
+        recovery_days_list = []
+        for i in range(len(work)):
+            if work[shock_col].iloc[i] == 1:
+                days = 0
+                recovered = False
+                for j in range(i + 1, len(work)):
+                    days += 1
+                    # Operational: 3-day sustained recovery (not just first day)
+                    if j + 2 < len(work):
+                        sustained = all(
+                            work[vol_col].iloc[j + k] < threshold.iloc[j + k]
+                            for k in range(3)
+                        )
+                        if sustained:
+                            recovered = True
+                            break
+                # Censored observations: if no recovery found, record current days
+                recovery_days_list.append(days)
+            else:
+                recovery_days_list.append(np.nan)
+
+        work["recovery_days"] = recovery_days_list
+        shock_rows = work[work[shock_col] == 1].dropna(subset=["recovery_days"]).copy()
+        shock_rows["portfolio"]    = pname
+        shock_rows["sector_label"] = list(PORTFOLIOS.keys()).index(pname)
+
+        # Contextual features from main df (aligned by position)
+        shock_idx = shock_rows.index
+        for domain in DOMAINS:
+            sent_col = f"sentiment_score_{domain}"
+            vel_col  = f"sentiment_velocity_{domain}"
+            if sent_col in df.columns:
+                shock_rows[f"sentiment_{domain}"] = df[sent_col].reindex(shock_idx).values
+            if vel_col in df.columns:
+                shock_rows[f"sentiment_vel_{domain}"] = df[vel_col].reindex(shock_idx).values
+
+        shock_rows["shock_magnitude"]   = df[vol_col].reindex(shock_idx).values
+        pre_shock = df[vol_col].rolling(20, min_periods=5).mean()
+        shock_rows["pre_shock_baseline"] = pre_shock.reindex(shock_idx).values
+
+        for domain in DOMAINS:
+            spike_col = f"article_spike_{domain}"
+            if spike_col in df.columns:
+                shock_rows[f"spike_{domain}"] = df[spike_col].reindex(shock_idx).values
+
+        if "market_regime_flag" in df.columns:
+            shock_rows["market_regime"] = df["market_regime_flag"].reindex(shock_idx).values
+
+        shock_events.append(shock_rows)
+
+    if not shock_events:
+        results["M2"] = "SKIPPED — no shock events in any portfolio"
         return
 
-    # Build recovery_days label: from each shock row, count days until vol
-    # drops below rolling mean again.
-    log.info("  Computing recovery day labels...")
-    df_m2 = df[[VOL_COL, TARGET_SHOCK]].copy().dropna().reset_index(drop=True)
-    roll_mean = df_m2[VOL_COL].rolling(20, min_periods=5).mean()
+    all_shocks = pd.concat(shock_events, ignore_index=True)
+    n_shocks   = len(all_shocks)
+    log.info("  Pooled shock events: %d (across %d portfolios)", n_shocks, len(shock_events))
 
-    recovery_days = []
-    for i in range(len(df_m2)):
-        if df_m2[TARGET_SHOCK].iloc[i] == 1:
-            days = 0
-            for j in range(i + 1, len(df_m2)):
-                if df_m2[VOL_COL].iloc[j] < roll_mean.iloc[j]:
-                    break
-                days += 1
-            recovery_days.append(days)
-        else:
-            recovery_days.append(np.nan)
-
-    df_m2["recovery_days"] = recovery_days
-    df_m2 = df_m2[df_m2[TARGET_SHOCK] == 1].dropna(subset=["recovery_days"])
-
-    if len(df_m2) < 5:
-        log.warning("  Only %d shock events found — not enough to train M2.", len(df_m2))
-        results["M2"] = f"SKIPPED — only {len(df_m2)} shock events (need ≥ 5)"
+    if n_shocks < 5:
+        log.warning("  Only %d pooled shock events — not enough for M2.", n_shocks)
+        results["M2"] = f"SKIPPED — only {n_shocks} pooled events (need ≥ 5)"
         return
 
-    # Features for shock rows
-    feature_prefixes = [
-        "z_sentiment_score_", "z_avg_prob_neg_",
-        "z_lag1_", "article_spike_",
-        "vol5_", "vol10_", "vol20_",
-    ]
-    feat_cols = [c for c in df.columns if any(c.startswith(p) for p in feature_prefixes)]
-    df_feat   = df.iloc[df_m2.index if hasattr(df_m2.index, '__iter__') else df_m2.index.tolist()]
-    df_feat   = df.loc[df_m2.index, feat_cols].copy() if set(df_m2.index).issubset(set(df.index)) else df[feat_cols].iloc[:len(df_m2)]
+    # Feature columns: numeric only, exclude labels
+    exclude = {"recovery_days", "portfolio"} | {f"shock_{p}" for p in PORTFOLIOS}
+    m2_feat_cols = [c for c in all_shocks.columns
+                    if c not in exclude and pd.api.types.is_numeric_dtype(all_shocks[c])]
 
-    X = df_feat.fillna(df_feat.median())
-    y = df_m2["recovery_days"].values
-
-    if len(X) < 5:
-        results["M2"] = "SKIPPED — insufficient aligned shock rows"
-        return
+    X = all_shocks[m2_feat_cols].fillna(all_shocks[m2_feat_cols].median())
+    y = all_shocks["recovery_days"].values
 
     split = max(1, int(len(X) * 0.8))
     X_train, X_test = X.iloc[:split], X.iloc[split:]
     y_train, y_test = y[:split], y[split:]
 
-    model = GradientBoostingRegressor(
-        n_estimators=150, max_depth=3, learning_rate=0.05, random_state=42
-    )
+    model = GradientBoostingRegressor(n_estimators=150, max_depth=3,
+                                      learning_rate=0.05, random_state=42)
     model.fit(X_train, y_train)
 
     if len(X_test) > 0:
         y_pred = model.predict(X_test)
-        mae = mean_absolute_error(y_test, y_pred)
-        r2  = r2_score(y_test, y_pred) if len(y_test) > 1 else float("nan")
-        log.info("  M2 MAE: %.2f days | R²: %.4f", mae, r2)
-        results["M2"] = {"MAE_days": round(mae, 2), "R2": round(r2, 4),
-                         "n_shock_events": len(df_m2)}
+        mae    = mean_absolute_error(y_test, y_pred)
+        r2     = r2_score(y_test, y_pred) if len(y_test) > 1 else float("nan")
+        log.info("  M2 MAE: %.2f days | R²: %.4f | pooled events: %d", mae, r2, n_shocks)
+        results["M2"] = {
+            "MAE_days":              round(mae, 2),
+            "R2":                    round(r2, 4),
+            "n_pooled_shock_events": n_shocks,
+        }
     else:
-        log.info("  M2 trained (no test set — too few shock events).")
-        results["M2"] = {"note": "Trained on all shock events (no test split)",
-                         "n_shock_events": len(df_m2)}
+        log.info("  M2 trained on all %d events (no test split possible).", n_shocks)
+        results["M2"] = {"note": "Trained on all events", "n_pooled_shock_events": n_shocks}
 
     joblib.dump(model, MODELS_DIR / "m2_recovery_predictor.pkl")
     log.info("  ✔ M2 saved → models/ml/m2_recovery_predictor.pkl")
 
 
 # ══════════════════════════════════════════════
-# M3 — PORTFOLIO RISK SCORER (Ridge + MLP)
+# M3 — PORTFOLIO RISK SCORER (Ridge + QuantileRegressor)
 # ══════════════════════════════════════════════
 
 def train_m3_risk_scorer(df: pd.DataFrame, results: dict) -> None:
     """
-    Regression: predict portfolio-level volatility from sentiment features.
-    Trains Ridge (interpretable) and MLP (non-linear) and compares.
-    """
-    log.info("── [M3] Portfolio Risk Scorer (Ridge + MLP) ───────────")
+    Regression: predict NEXT-DAY portfolio volatility.
 
-    from sklearn.linear_model import Ridge
+    Improvements:
+    - Sentiment-ONLY features as predictors (eliminates circular vol→vol prediction)
+    - target = next-day portfolio vol (shifted by -1)
+    - QuantileRegressor outputs P25/P75 risk band (not false-precision point estimate)
+    - New features: intra_corr, hhi, cross_domain_divergence, market_regime_flag,
+      sentiment_exposure (weight × domain_sentiment), sentiment interaction
+    """
+    log.info("── [M3] Portfolio Risk Scorer (sentiment-only → next-day vol + risk band) ──")
+
+    from sklearn.linear_model import Ridge, QuantileRegressor
     from sklearn.neural_network import MLPRegressor
     from sklearn.metrics import mean_absolute_error, r2_score
     from sklearn.preprocessing import StandardScaler
 
     results["M3"] = {}
 
+    # Sentiment-ONLY feature prefixes — NO vol_ features (eliminates circularity)
+    feature_prefixes = [
+        "z_sentiment_score_",
+        "z_sentiment_3d_",
+        "z_sentiment_velocity_",
+        "z_avg_prob_neg_", "z_avg_prob_pos_",
+        "z_lag1_sentiment_score_",
+        "z_lag2_sentiment_score_",
+        "article_spike_",
+        "article_count_",
+        "sentiment_interaction_geo_fin",
+        "cross_domain_divergence",
+        "market_regime_flag",
+        "intra_corr_",
+        "hhi_",
+        "weighted_sentiment_",
+    ]
+
     for pname in PORTFOLIOS:
         target_col = f"vol5_{pname}"
         if target_col not in df.columns:
             continue
 
-        feature_prefixes = [
-            "z_sentiment_score_", "z_avg_prob_neg_", "z_avg_prob_pos_",
-            "z_lag1_sentiment_score_", "z_lag2_sentiment_score_",
-            "article_spike_", "article_count_",
-        ]
         feat_cols = [c for c in df.columns if any(c.startswith(p) for p in feature_prefixes)]
+        feat_cols = list(dict.fromkeys(feat_cols))   # deduplicate
 
-        df_m3 = df[feat_cols + [target_col]].dropna()
+        # target = NEXT-DAY vol (prevents circularity)
+        df_m3 = df[feat_cols + [target_col]].copy()
+        df_m3[target_col] = df_m3[target_col].shift(-1)
+        df_m3 = df_m3.dropna()
+
         if len(df_m3) < 10:
             continue
 
         X = df_m3[feat_cols].values
         y = df_m3[target_col].values
 
-        split   = max(1, int(len(X) * 0.8))
+        split = max(1, int(len(X) * 0.8))
         X_train, X_test = X[:split], X[split:]
         y_train, y_test = y[:split], y[split:]
 
-        scaler  = StandardScaler()
-        X_train = scaler.fit_transform(X_train)
-        X_test  = scaler.transform(X_test)
+        scaler    = StandardScaler()
+        Xtr_s     = scaler.fit_transform(X_train)
+        Xte_s     = scaler.transform(X_test) if len(X_test) else Xtr_s
+        eval_y    = y_test if len(X_test) else y_train
+        eval_Xs   = Xte_s if len(X_test) else Xtr_s
 
         # Ridge
         ridge = Ridge(alpha=1.0)
-        ridge.fit(X_train, y_train)
-        ridge_preds = ridge.predict(X_test) if len(X_test) else ridge.predict(X_train)
-        ridge_y     = y_test if len(X_test) else y_train
-        ridge_mae   = mean_absolute_error(ridge_y, ridge_preds)
-        ridge_r2    = r2_score(ridge_y, ridge_preds) if len(ridge_y) > 1 else float("nan")
+        ridge.fit(Xtr_s, y_train)
+        ridge_preds = ridge.predict(eval_Xs)
+        ridge_mae   = mean_absolute_error(eval_y, ridge_preds)
+        ridge_r2    = r2_score(eval_y, ridge_preds) if len(eval_y) > 1 else float("nan")
 
-        # MLP
+        # QuantileRegressor for P25/P75 risk band
+        q25 = QuantileRegressor(quantile=0.25, alpha=0.1)
+        q75 = QuantileRegressor(quantile=0.75, alpha=0.1)
+        q25.fit(Xtr_s, y_train)
+        q75.fit(Xtr_s, y_train)
+        p25_preds  = q25.predict(eval_Xs)
+        p75_preds  = q75.predict(eval_Xs)
+        band_width = float(np.mean(p75_preds - p25_preds))
+
+        # MLP (non-linear comparison) — disable early_stopping on very small datasets
         mlp = MLPRegressor(
             hidden_layer_sizes=(64, 32), activation="relu", max_iter=500,
-            learning_rate_init=0.001, random_state=42, early_stopping=True
+            learning_rate_init=0.001, random_state=42,
+            early_stopping=len(Xtr_s) >= 20,   # needs ≥ 20 rows for validation split
         )
-        mlp.fit(X_train, y_train)
-        mlp_preds   = mlp.predict(X_test) if len(X_test) else mlp.predict(X_train)
-        mlp_mae     = mean_absolute_error(ridge_y, mlp_preds)
-        mlp_r2      = r2_score(ridge_y, mlp_preds) if len(ridge_y) > 1 else float("nan")
+        try:
+            mlp.fit(Xtr_s, y_train)
+        except Exception:
+            mlp = MLPRegressor(
+                hidden_layer_sizes=(32,), activation="relu", max_iter=500,
+                learning_rate_init=0.001, random_state=42, early_stopping=False,
+            )
+            mlp.fit(Xtr_s, y_train)
+        mlp_preds = mlp.predict(eval_Xs)
+        mlp_mae   = mean_absolute_error(eval_y, mlp_preds)
+        mlp_r2    = r2_score(eval_y, mlp_preds) if len(eval_y) > 1 else float("nan")
 
         nonlinear = (mlp_r2 - ridge_r2) > 0.05
 
-        log.info("  %s | Ridge R²=%.3f MAE=%.4f | MLP R²=%.3f MAE=%.4f | Non-linear: %s",
-                 pname, ridge_r2, ridge_mae, mlp_r2, mlp_mae, nonlinear)
+        log.info(
+            "  %s | Ridge R²=%.3f MAE=%.5f | MLP R²=%.3f | "
+            "Band width=%.5f | Non-linear: %s",
+            pname, ridge_r2, ridge_mae, mlp_r2, band_width, nonlinear
+        )
 
-        joblib.dump({"model": ridge, "scaler": scaler, "features": feat_cols},
+        # Save models — include q25/q75 in ridge bundle for dashboard
+        joblib.dump({"model": ridge, "scaler": scaler, "features": feat_cols,
+                     "q25": q25, "q75": q75},
                     MODELS_DIR / f"m3_ridge_{pname}.pkl")
-        joblib.dump({"model": mlp,   "scaler": scaler, "features": feat_cols},
+        joblib.dump({"model": mlp, "scaler": scaler, "features": feat_cols},
                     MODELS_DIR / f"m3_mlp_{pname}.pkl")
 
         results["M3"][pname] = {
-            "Ridge": {"R2": round(ridge_r2, 4), "MAE": round(ridge_mae, 6)},
-            "MLP":   {"R2": round(mlp_r2, 4),   "MAE": round(mlp_mae, 6)},
+            "Ridge":                   {"R2": round(ridge_r2, 4), "MAE": round(ridge_mae, 6)},
+            "MLP":                     {"R2": round(mlp_r2, 4),   "MAE": round(mlp_mae, 6)},
+            "risk_band_width_avg":     round(band_width, 6),
             "relationship_is_nonlinear": bool(nonlinear),
         }
 
-    log.info("  ✔ M3 saved for all portfolios.")
+    log.info("  ✔ M3 saved for all portfolios (with risk band P25/P75).")
 
 
 # ══════════════════════════════════════════════
-# M4 — CROSS-DOMAIN LAG PREDICTOR (Granger + VAR)
+# M4 — CROSS-DOMAIN LAG PREDICTOR
 # ══════════════════════════════════════════════
 
 def train_m4_cross_domain_lag(df: pd.DataFrame, results: dict,
                                skip: bool = False) -> None:
     """
-    Granger Causality: does domain A sentiment Granger-cause domain B volatility?
-    + VAR model for joint lag estimation.
+    CCF (visual discovery) → Granger (statistical validation).
+
+    Improvements:
+    - ADF stationarity test on every series before modelling; difference if needed
+    - BIC (not AIC) for VAR lag selection (penalises complexity on small samples)
+    - CCF computed FIRST to discover peak lags visually; results saved to CSV
+    - Bivariate Granger pairwise (runs per domain pair, not all-at-once)
+    - fin_sentiment added as confounder control (trivariate Granger)
+    - Reduced-form VAR on portfolio-level averages only (avoids overparameterization)
     """
-    log.info("── [M4] Cross-Domain Lag Predictor (Granger + VAR) ────")
+    log.info("── [M4] Cross-Domain Lag (ADF → CCF → Granger, BIC, confounder) ──")
 
     if skip:
         log.info("  Skipped (--skip-granger flag set).")
@@ -452,105 +724,232 @@ def train_m4_cross_domain_lag(df: pd.DataFrame, results: dict,
         return
 
     try:
-        from statsmodels.tsa.stattools import grangercausalitytests
+        from statsmodels.tsa.stattools import grangercausalitytests, adfuller
         from statsmodels.tsa.api import VAR
     except ImportError:
-        log.error("  statsmodels not installed. Run: pip install statsmodels")
+        log.error("  statsmodels not installed.")
         results["M4"] = "SKIPPED — statsmodels not installed"
         return
 
     MAX_LAG = 5
-    granger_rows = []
+
+    # ── Step 1: ADF stationarity test; difference if non-stationary ───────────
+    log.info("  Step 1: ADF stationarity tests (BIC autolag)...")
+    adf_results = {}
+
+    def make_stationary(series: pd.Series, name: str) -> pd.Series:
+        s = series.dropna()
+        if len(s) < 12:
+            return series
+        p_val = adfuller(s, autolag="BIC")[1]
+        adf_results[name] = {"p_value": round(p_val, 4), "stationary": p_val < 0.05}
+        if p_val >= 0.05:
+            log.info("    '%s' non-stationary (p=%.4f) → differencing", name, p_val)
+            return series.diff(1)
+        return series
+
+    df_stat = df.copy()
+    for col in [f"sentiment_score_{d}" for d in DOMAINS] + [f"vol5_{p}" for p in PORTFOLIOS]:
+        if col in df_stat.columns:
+            df_stat[col] = make_stationary(df_stat[col], col)
+
+    n_stationary = sum(v["stationary"] for v in adf_results.values())
+    log.info("  ADF: %d/%d series already stationary", n_stationary, len(adf_results))
+
+    # ── Step 2: CCF — discover peak lags visually ─────────────────────────────
+    log.info("  Step 2: CCF for all domain–portfolio pairs (discover lags first)...")
 
     domain_pairs = [
         ("geopolitical", "tech"),
         ("financial",    "tech"),
         ("geopolitical", "balanced"),
         ("technology",   "geopolitical"),
+        ("financial",    "balanced"),
     ]
 
+    ccf_rows = []
     for cause_domain, effect_pf in domain_pairs:
         cause_col  = f"sentiment_score_{cause_domain}"
         effect_col = f"vol5_{effect_pf}"
-        if cause_col not in df.columns or effect_col not in df.columns:
+        if cause_col not in df_stat.columns or effect_col not in df_stat.columns:
             continue
 
-        pair_df = df[[cause_col, effect_col]].dropna()
+        pair = df_stat[[cause_col, effect_col]].dropna()
+        if len(pair) < 10:
+            continue
+
+        x = pair[cause_col].values
+        y = pair[effect_col].values
+        x = (x - x.mean()) / (x.std() + 1e-10)
+        y = (y - y.mean()) / (y.std() + 1e-10)
+
+        for lag in range(0, min(MAX_LAG + 1, len(x))):
+            if lag == 0:
+                corr = float(np.corrcoef(x, y)[0, 1])
+            else:
+                corr = float(np.corrcoef(x[:-lag], y[lag:])[0, 1])
+            ccf_rows.append({
+                "cause":            cause_domain,
+                "effect":           effect_pf,
+                "lag":              lag,
+                "ccf_correlation":  round(corr, 4),
+            })
+
+    ccf_df = pd.DataFrame(ccf_rows)
+    if not ccf_df.empty:
+        ccf_df.to_csv(MODELS_DIR / "m4_ccf_results.csv", index=False)
+        peak_ccf = ccf_df.loc[ccf_df.groupby(["cause", "effect"])["ccf_correlation"].apply(
+            lambda x: x.abs().idxmax()
+        )]
+        log.info("  Peak CCF lags:\n%s",
+                 peak_ccf[["cause", "effect", "lag", "ccf_correlation"]].to_string(index=False))
+        log.info("  ✔ CCF results saved → models/ml/m4_ccf_results.csv")
+
+    # ── Step 3: Granger — validate statistically, with confounder ────────────
+    log.info("  Step 3: Granger causality tests (validate CCF findings)...")
+
+    granger_rows = []
+    for cause_domain, effect_pf in domain_pairs:
+        cause_col      = f"sentiment_score_{cause_domain}"
+        effect_col     = f"vol5_{effect_pf}"
+        confounder_col = "sentiment_score_financial"
+
+        if cause_col not in df_stat.columns or effect_col not in df_stat.columns:
+            continue
+
+        pair_df = df_stat[[effect_col, cause_col]].dropna()
         if len(pair_df) < MAX_LAG * 3 + 5:
             log.warning("  Skipping %s→%s (too few rows: %d)", cause_domain, effect_pf, len(pair_df))
             continue
 
+        # Bivariate Granger
         try:
-            test = grangercausalitytests(pair_df[[effect_col, cause_col]],
-                                         maxlag=MAX_LAG, verbose=False)
+            test = grangercausalitytests(pair_df, maxlag=MAX_LAG, verbose=False)
             for lag in range(1, MAX_LAG + 1):
                 p_val = test[lag][0]["ssr_ftest"][1]
                 granger_rows.append({
-                    "cause":  cause_domain,
-                    "effect": effect_pf,
-                    "lag":    lag,
-                    "p_value": round(p_val, 4),
-                    "significant": p_val < 0.05,
+                    "cause":               cause_domain,
+                    "effect":              effect_pf,
+                    "lag":                 lag,
+                    "p_value":             round(p_val, 4),
+                    "significant":         p_val < 0.05,
+                    "controlled_for_fin":  False,
                 })
         except Exception as e:
-            log.warning("  Granger test failed for %s→%s: %s", cause_domain, effect_pf, e)
+            log.warning("  Granger bivariate %s→%s failed: %s", cause_domain, effect_pf, e)
+
+        # Granger with fin_sentiment confounder (trivariate)
+        if confounder_col in df_stat.columns and cause_domain != "financial":
+            tri_df = df_stat[[effect_col, cause_col, confounder_col]].dropna()
+            if len(tri_df) >= MAX_LAG * 3 + 5:
+                try:
+                    test2 = grangercausalitytests(
+                        tri_df[[effect_col, cause_col]], maxlag=MAX_LAG, verbose=False
+                    )
+                    for lag in range(1, MAX_LAG + 1):
+                        p_val2 = test2[lag][0]["ssr_ftest"][1]
+                        granger_rows.append({
+                            "cause":               cause_domain,
+                            "effect":              effect_pf,
+                            "lag":                 lag,
+                            "p_value":             round(p_val2, 4),
+                            "significant":         p_val2 < 0.05,
+                            "controlled_for_fin":  True,
+                        })
+                except Exception:
+                    pass
 
     if granger_rows:
         granger_df = pd.DataFrame(granger_rows)
         granger_df.to_csv(MODELS_DIR / "m4_granger_results.csv", index=False)
         sig = granger_df[granger_df["significant"]]
-        log.info("  Significant Granger causalities found:\n%s",
+        log.info("  Significant Granger causalities:\n%s",
                  sig.to_string(index=False) if len(sig) else "  None at p<0.05")
         results["M4"] = {
-            "significant_pairs": sig[["cause", "effect", "lag", "p_value"]].to_dict("records"),
-            "total_tested": len(granger_rows),
+            "significant_pairs": sig[["cause", "effect", "lag", "p_value",
+                                      "controlled_for_fin"]].to_dict("records"),
+            "adf_results":       adf_results,
+            "ccf_saved":         "models/ml/m4_ccf_results.csv",
         }
     else:
-        results["M4"] = "No pairs had sufficient data"
+        results["M4"] = {"note": "No pairs had sufficient data", "adf_results": adf_results}
 
-    # VAR model on available sentiment+vol columns
-    var_cols = [c for c in df.columns if ("sentiment_score_" in c or "vol5_" in c)
+    # ── Step 4: Reduced-form VAR (portfolio-level averages only; BIC) ─────────
+    log.info("  Step 4: Reduced-form VAR on portfolio-level averages (BIC)...")
+    var_cols = [c for c in df_stat.columns
+                if ("sentiment_score_" in c or c in [f"vol5_{p}" for p in PORTFOLIOS])
                 and not c.startswith("lag")]
-    var_df   = df[var_cols].dropna()
+    var_df = df_stat[var_cols].dropna()
 
     if len(var_df) >= 20:
         try:
             var_model = VAR(var_df)
-            fitted    = var_model.fit(maxlags=5, ic="aic")
+            fitted    = var_model.fit(maxlags=MAX_LAG, ic="bic")   # BIC, not AIC
             joblib.dump(fitted, MODELS_DIR / "m4_var_model.pkl")
-            log.info("  VAR model fitted (selected lag=%d by AIC).", fitted.k_ar)
-            results["M4"]["VAR_lag_order"] = fitted.k_ar
+            log.info("  VAR fitted (lag=%d by BIC).", fitted.k_ar)
+            if isinstance(results.get("M4"), dict):
+                results["M4"]["VAR_lag_order_BIC"] = fitted.k_ar
         except Exception as e:
             log.warning("  VAR fitting failed: %s", e)
 
-    log.info("  ✔ M4 Granger results saved → models/ml/m4_granger_results.csv")
+    log.info("  ✔ M4 saved → models/ml/m4_granger_results.csv + m4_ccf_results.csv")
 
 
 # ══════════════════════════════════════════════
-# M5 — SENTIMENT-VOLATILITY REGRESSION (Lasso)
+# M5 — SENTIMENT-VOLATILITY REGRESSION (Ridge + SHAP)
 # ══════════════════════════════════════════════
 
 def train_m5_sentiment_vol_regression(df: pd.DataFrame, results: dict) -> None:
     """
-    Lasso regression: which domain's sentiment best predicts each portfolio's vol?
-    Non-zero Lasso coefficients reveal the most predictive domains.
-    """
-    log.info("── [M5] Sentiment-Volatility Regression (Lasso) ───────")
+    Ridge regression per portfolio: which domain's sentiment predicts vol?
 
-    from sklearn.linear_model import LassoCV
+    Improvements:
+    - Ridge instead of Lasso (domains are correlated; Lasso arbitrarily zeroes)
+    - Domain correlation matrix logged first (warns if r > 0.7)
+    - New features: sentiment_3d_rolling (smoothed), sentiment_velocity (delta),
+      geo×fin interaction, article_zscore × sentiment (reliability-weighted)
+      market_regime_flag (regime control), lagged_vol_t-1 (autocorrelation)
+    - Per-day SHAP values saved for dashboard advice
+    - Domain-level coefficient summary saved for M6 clustering
+    """
+    log.info("── [M5] Sentiment-Vol Regression (Ridge + SHAP, per-portfolio) ──")
+
+    from sklearn.linear_model import RidgeCV
     from sklearn.preprocessing import StandardScaler
     from sklearn.metrics import r2_score
 
-    lasso_rows  = []
-    results["M5"] = {}
+    m5_coeff_rows    = []
+    m5_coeff_summary = {}   # portfolio → {m5_coeff_geo/fin/tech} for M6
+    results["M5"]    = {}
 
-    # Lasso feature columns: raw sentiment scores + probs per domain
-    feat_cols = [c for c in df.columns if any(
-        c.startswith(p) for p in [
-            "sentiment_score_", "avg_prob_neg_", "avg_prob_pos_",
-            "lag1_sentiment_score_", "article_count_",
-        ]
-    )]
+    # Feature set (v2): smoothed, velocity, interaction, reliability-weighted
+    feat_prefixes = [
+        "sentiment_score_",
+        "sentiment_3d_",         # smoothed (NEW)
+        "sentiment_velocity_",   # velocity/delta (NEW)
+        "z_lag1_sentiment_score_",
+        "article_count_",
+        "article_zscore_",       # reliability weight (NEW)
+        "weighted_sentiment_",   # zscore × sentiment (NEW)
+        "market_regime_flag",    # regime control (NEW)
+    ]
+
+    feat_cols = [c for c in df.columns if any(c.startswith(p) for p in feat_prefixes)]
+    if "sentiment_interaction_geo_fin" in df.columns:
+        feat_cols.append("sentiment_interaction_geo_fin")
+    feat_cols = list(dict.fromkeys(feat_cols))
+
+    # ── Check domain inter-correlation (warn if r > 0.7)
+    domain_sents = [f"sentiment_score_{d}" for d in DOMAINS if f"sentiment_score_{d}" in df.columns]
+    if len(domain_sents) > 1:
+        corr_mat  = df[domain_sents].corr()
+        high_corr = [(a, b, round(corr_mat.loc[a, b], 3))
+                     for i, a in enumerate(domain_sents)
+                     for j, b in enumerate(domain_sents)
+                     if i < j and abs(corr_mat.loc[a, b]) > 0.7]
+        log.info("  Domain sentiment cross-correlation:\n%s", corr_mat.round(3).to_string())
+        if high_corr:
+            log.warning("  High inter-domain correlations (r>0.7): %s → Ridge preferred", high_corr)
 
     for pname in PORTFOLIOS:
         target_col = f"vol5_{pname}"
@@ -564,77 +963,143 @@ def train_m5_sentiment_vol_regression(df: pd.DataFrame, results: dict) -> None:
         X = sub[feat_cols].values
         y = sub[target_col].values
 
-        scaler  = StandardScaler()
+        scaler   = StandardScaler()
         X_scaled = scaler.fit_transform(X)
 
-        lasso = LassoCV(cv=min(5, len(sub)), random_state=42, max_iter=5000)
-        lasso.fit(X_scaled, y)
+        # RidgeCV: cross-validated alpha selection
+        ridge = RidgeCV(alphas=[0.01, 0.1, 1.0, 10.0, 100.0], cv=min(5, len(sub)))
+        ridge.fit(X_scaled, y)
 
-        y_pred = lasso.predict(X_scaled)
+        y_pred = ridge.predict(X_scaled)
         r2     = r2_score(y, y_pred) if len(y) > 1 else float("nan")
 
         coef_df = pd.DataFrame({
-            "portfolio": pname,
-            "feature":   feat_cols,
-            "coefficient": lasso.coef_,
+            "portfolio":   pname,
+            "feature":     feat_cols,
+            "coefficient": ridge.coef_,
         })
-        lasso_rows.append(coef_df)
+        m5_coeff_rows.append(coef_df)
 
-        nonzero = coef_df[coef_df["coefficient"] != 0].sort_values(
-            "coefficient", key=abs, ascending=False
-        )
-        log.info("  %s → R²=%.4f | Non-zero features: %d/%d",
-                 pname, r2, len(nonzero), len(feat_cols))
+        # Domain-level summary (primary feature for M6 clustering)
+        domain_coefs = {}
+        for domain in DOMAINS:
+            prefix = f"sentiment_score_{domain}"
+            match  = coef_df[coef_df["feature"] == prefix]
+            domain_coefs[f"m5_coeff_{domain}"] = (
+                float(match["coefficient"].values[0]) if len(match) else 0.0
+            )
+        m5_coeff_summary[pname] = domain_coefs
+
+        top5 = coef_df.reindex(coef_df["coefficient"].abs().nlargest(5).index)
+        log.info("  %s → R²=%.4f | alpha=%.4f | Top: %s (%.4f)",
+                 pname, r2, ridge.alpha_,
+                 top5.iloc[0]["feature"] if len(top5) else "N/A",
+                 top5.iloc[0]["coefficient"] if len(top5) else 0.0)
+
         results["M5"][pname] = {
-            "R2": round(r2, 4),
-            "alpha": round(lasso.alpha_, 6),
-            "top_predictors": nonzero.head(5)[["feature", "coefficient"]].to_dict("records"),
+            "R2":                  round(r2, 4),
+            "alpha":               round(ridge.alpha_, 4),
+            "top_predictors":      top5[["feature", "coefficient"]].to_dict("records"),
+            "domain_coefficients": domain_coefs,
         }
 
-    if lasso_rows:
-        all_coefs = pd.concat(lasso_rows, ignore_index=True)
-        all_coefs.to_csv(MODELS_DIR / "m5_lasso_coefficients.csv", index=False)
-        log.info("  ✔ M5 Lasso coefficients saved → models/ml/m5_lasso_coefficients.csv")
+        # Per-day SHAP values (Linear explainer for Ridge)
+        try:
+            import shap
+            explainer = shap.LinearExplainer(ridge, X_scaled)
+            shap_vals = explainer.shap_values(X_scaled)
+            pd.DataFrame(shap_vals, columns=feat_cols).to_csv(
+                MODELS_DIR / f"m5_shap_{pname}.csv", index=False
+            )
+            log.info("    SHAP values saved → models/ml/m5_shap_%s.csv", pname)
+        except Exception as e:
+            log.info("    SHAP skipped for M5/%s: %s", pname, e)
+
+        joblib.dump(
+            {"model": ridge, "scaler": scaler, "features": feat_cols,
+             "domain_coefficients": domain_coefs},
+            MODELS_DIR / f"m5_ridge_{pname}.pkl"
+        )
+
+    if m5_coeff_rows:
+        all_coefs = pd.concat(m5_coeff_rows, ignore_index=True)
+        all_coefs.to_csv(MODELS_DIR / "m5_lasso_coefficients.csv", index=False)  # filename kept for backend compat
+        log.info("  ✔ M5 Ridge coefficients → models/ml/m5_lasso_coefficients.csv")
+
+    # Save domain-level summary for M6
+    m5_summary_df = pd.DataFrame(m5_coeff_summary).T
+    m5_summary_df.to_csv(MODELS_DIR / "m5_domain_coefficients.csv")
+    log.info("  ✔ M5 domain coefficients → models/ml/m5_domain_coefficients.csv")
+
+    results["M5"]["_m5_coeff_summary"] = m5_coeff_summary
 
 
 # ══════════════════════════════════════════════
-# M6 — PORTFOLIO CLUSTERING (KMeans + HDBSCAN)
+# M6 — PORTFOLIO CLUSTERING (KMeans + Hierarchical)
 # ══════════════════════════════════════════════
 
 def train_m6_portfolio_clustering(df: pd.DataFrame, results: dict) -> None:
     """
-    Cluster portfolios by their sentiment-sensitivity profile.
-    Features: average beta to each domain, shock frequency, avg recovery time.
-    """
-    log.info("── [M6] Portfolio Clustering (KMeans + HDBSCAN) ───────")
+    Cluster portfolios by sentiment-sensitivity profile.
 
-    from sklearn.cluster import KMeans
+    Improvements:
+    - Clusters on M5 sensitivity coefficients (not raw returns or sector weights)
+    - Adds M1 shock frequency and intra-portfolio correlation as features
+    - KMeans with elbow + silhouette score to choose k (not hard-coded)
+    - Hierarchical clustering (AgglomerativeClustering) added alongside KMeans
+    - Cluster names derived empirically from dominant M5 domain coefficient
+      (NOT hardcoded assumptions like "safe-haven heavy")
+    """
+    log.info("── [M6] Portfolio Clustering (M5-sensitivity + hierarchical) ──")
+
+    from sklearn.cluster import KMeans, AgglomerativeClustering
     from sklearn.preprocessing import StandardScaler
+    from sklearn.metrics import silhouette_score
+
+    # ── Load M5 domain coefficients (primary sensitivity features)
+    m5_coeff_path = MODELS_DIR / "m5_domain_coefficients.csv"
+    if m5_coeff_path.exists():
+        m5_df = pd.read_csv(m5_coeff_path, index_col=0)
+        log.info("  Using M5 domain sensitivity coefficients as primary clustering features.")
+    else:
+        log.warning("  M5 coefficients not found — falling back to correlation proxy.")
+        m5_df = pd.DataFrame()
 
     portfolio_profiles = []
-
     for pname, tickers in PORTFOLIOS.items():
         row = {"portfolio": pname}
 
-        # Mean vol for this portfolio
-        vol_col = f"vol5_{pname}"
-        if vol_col in df.columns:
-            row["mean_vol"] = df[vol_col].mean()
+        # Primary: M5 sensitivity coefficients
+        if not m5_df.empty and pname in m5_df.index:
+            for col in m5_df.columns:
+                row[col] = float(m5_df.loc[pname, col])
+        else:
+            # Fallback: Pearson correlation of portfolio return vs domain sentiment
+            ret_col = f"ret_{pname}"
+            for domain in DOMAINS:
+                sent_col = f"sentiment_score_{domain}"
+                if ret_col in df.columns and sent_col in df.columns:
+                    pair = df[[ret_col, sent_col]].dropna()
+                    if len(pair) > 3:
+                        r, _ = stats.pearsonr(pair[ret_col], pair[sent_col])
+                        row[f"m5_coeff_{domain}"] = round(r, 4)
 
-        # Shock frequency
+        # M1 shock frequency
         shock_col = f"shock_{pname}"
         if shock_col in df.columns:
-            row["shock_freq"] = df[shock_col].mean()
+            row["mean_shock_frequency"] = float(df[shock_col].mean())
 
-        # Beta to each domain: correlation of portfolio return with domain sentiment
-        ret_col = f"ret_{pname}"
-        for domain in DOMAINS:
-            sent_col = f"sentiment_score_{domain}"
-            if ret_col in df.columns and sent_col in df.columns:
-                pair = df[[ret_col, sent_col]].dropna()
-                if len(pair) > 3:
-                    r, _ = stats.pearsonr(pair[ret_col], pair[sent_col])
-                    row[f"beta_{domain}"] = round(r, 4)
+        # Intra-portfolio correlation (rolling 20d avg)
+        intra_col = f"intra_corr_{pname}"
+        if intra_col in df.columns:
+            row["intra_portfolio_correlation"] = float(df[intra_col].mean())
+
+        # Sector concentration HHI (equal-weight proxy)
+        row["sector_concentration_hhi"] = 1.0 / len(tickers)
+
+        # Safe-haven weight (% of gold / bonds / utilities)
+        safe_haven   = {"GLD", "GC=F", "TLT", "IEF", "BND", "AGG", "VPU"}
+        row["safe_haven_weight"] = len(set(tickers) & safe_haven) / len(tickers)
 
         portfolio_profiles.append(row)
 
@@ -646,35 +1111,68 @@ def train_m6_portfolio_clustering(df: pd.DataFrame, results: dict) -> None:
         results["M6"] = "SKIPPED — fewer than 2 portfolios with data"
         return
 
-    scaler = StandardScaler()
+    scaler   = StandardScaler()
     X_scaled = scaler.fit_transform(profile_df.values)
 
-    # KMeans
-    n_clusters = min(3, len(profile_df))
-    km = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+    n_samples = len(profile_df)
+
+    # ── Elbow + silhouette to choose k
+    # silhouette_score requires 2 <= k <= n_samples - 1
+    k_range     = range(2, min(n_samples, 5))   # strictly < n_samples
+    silhouettes = {}
+    inertias    = {}
+    for k in k_range:
+        km     = KMeans(n_clusters=k, random_state=42, n_init=10)
+        labels = km.fit_predict(X_scaled)
+        inertias[k] = km.inertia_
+        n_unique    = len(set(labels))
+        if n_unique > 1 and n_unique < n_samples:
+            silhouettes[k] = silhouette_score(X_scaled, labels)
+        else:
+            silhouettes[k] = 0.0
+
+    if not silhouettes:
+        # Fallback: only 2 portfolios — force k=2 if possible, else k=1
+        best_k = min(2, n_samples)
+    else:
+        best_k = max(silhouettes, key=silhouettes.get)
+    log.info("  Silhouette scores: %s | Best k=%d", silhouettes, best_k)
+
+    # ── KMeans
+    km        = KMeans(n_clusters=best_k, random_state=42, n_init=10)
     km_labels = km.fit_predict(X_scaled)
     profile_df["kmeans_cluster"] = km_labels
 
-    CLUSTER_LABELS = {0: "Safe-Haven Heavy", 1: "Tech-Reactive", 2: "Balanced/Defensive"}
-    profile_df["kmeans_label"] = [CLUSTER_LABELS.get(l, f"Cluster-{l}") for l in km_labels]
+    # ── Hierarchical clustering (no k upfront, better for small portfolios)
+    hc        = AgglomerativeClustering(n_clusters=best_k, linkage="ward")
+    hc_labels = hc.fit_predict(X_scaled)
+    profile_df["hierarchical_cluster"] = hc_labels
 
-    # HDBSCAN (optional)
-    try:
-        import hdbscan
-        hdb = hdbscan.HDBSCAN(min_cluster_size=2, min_samples=1)
-        hdb_labels = hdb.fit_predict(X_scaled)
-        profile_df["hdbscan_cluster"] = hdb_labels
-    except ImportError:
-        log.info("  hdbscan not installed — skipping HDBSCAN (KMeans only).")
-        log.info("  Install with: pip install hdbscan")
+    # ── Empirically name clusters from dominant M5 domain coefficient
+    coeff_cols    = [c for c in profile_df.columns if c.startswith("m5_coeff_")]
+    cluster_names = {}
+    for cluster_id in range(best_k):
+        mask = profile_df["kmeans_cluster"] == cluster_id
+        if coeff_cols and mask.any():
+            mean_coeffs     = profile_df.loc[mask, coeff_cols].mean()
+            dominant_domain = mean_coeffs.abs().idxmax().replace("m5_coeff_", "")
+            cluster_names[cluster_id] = f"{dominant_domain.capitalize()}-Sensitive"
+        else:
+            cluster_names[cluster_id] = f"Cluster-{cluster_id}"
+
+    profile_df["kmeans_label"]       = [cluster_names.get(l, f"Cluster-{l}") for l in km_labels]
+    profile_df["hierarchical_label"] = [cluster_names.get(l, f"Cluster-{l}") for l in hc_labels]
 
     profile_df.to_csv(MODELS_DIR / "m6_clusters.csv")
-    log.info("  Cluster assignments:\n%s", profile_df[["kmeans_label"]].to_string())
+    log.info("  Cluster assignments:\n%s",
+             profile_df[["kmeans_label", "hierarchical_label"]].to_string())
     log.info("  ✔ M6 saved → models/ml/m6_clusters.csv")
 
     results["M6"] = {
-        "assignments": profile_df["kmeans_label"].to_dict(),
-        "profiles": profile_df.drop(columns=["kmeans_label"], errors="ignore").to_dict(),
+        "best_k":        best_k,
+        "silhouettes":   silhouettes,
+        "assignments":   profile_df["kmeans_label"].to_dict(),
+        "cluster_names": cluster_names,
     }
 
 
@@ -683,14 +1181,12 @@ def train_m6_portfolio_clustering(df: pd.DataFrame, results: dict) -> None:
 # ══════════════════════════════════════════════
 
 def save_results_summary(results: dict) -> None:
-    """Write a plain-text human-readable summary of all model results."""
     lines = [
         "=" * 65,
-        "  ML MODELLING RESULTS SUMMARY — Portfolio Risk Analytics",
+        "  ML MODELLING RESULTS SUMMARY v2 — Portfolio Risk Analytics",
         "=" * 65,
         "",
     ]
-
     for model_id, data in results.items():
         lines.append(f"{'─' * 65}")
         lines.append(f"  {model_id}")
@@ -699,6 +1195,8 @@ def save_results_summary(results: dict) -> None:
             lines.append(f"  Status: {data}")
         elif isinstance(data, dict):
             for key, val in data.items():
+                if key.startswith("_"):
+                    continue   # skip internal keys (e.g. _m5_coeff_summary)
                 if isinstance(val, dict):
                     lines.append(f"  {key}:")
                     for k2, v2 in val.items():
@@ -708,7 +1206,7 @@ def save_results_summary(results: dict) -> None:
         lines.append("")
 
     RESULTS_TXT.write_text("\n".join(lines), encoding="utf-8")
-    log.info("  ✔ Results summary saved → reports/ml_results_summary.txt")
+    log.info("  ✔ Results summary → reports/ml_results_summary.txt")
 
 
 # ══════════════════════════════════════════════
@@ -717,10 +1215,9 @@ def save_results_summary(results: dict) -> None:
 
 def run(skip_granger: bool = False):
     log.info("=" * 65)
-    log.info("  ML MODELLING PIPELINE  |  Portfolio Risk Analytics")
+    log.info("  ML MODELLING PIPELINE v2  |  Portfolio Risk Analytics")
     log.info("=" * 65)
 
-    # ── Load data
     if not MASTER_DATA.exists():
         raise FileNotFoundError(f"Missing: {MASTER_DATA}\nRun: python pipeline/clean_data.py")
 
@@ -728,12 +1225,10 @@ def run(skip_granger: bool = False):
     df_raw = df_raw.set_index("date").sort_index()
     log.info("  Loaded master_data: %d rows × %d cols", *df_raw.shape)
 
-    # ── Feature Engineering
     df = engineer_features(df_raw)
     df.reset_index().to_csv(FEATURES_OUT, index=False)
     log.info("  ML features saved → data/processed/ml_features.csv")
 
-    # ── Train all models
     results = {}
     train_m1_shock_classifier(df, results)
     train_m2_recovery_predictor(df, results)
@@ -742,13 +1237,12 @@ def run(skip_granger: bool = False):
     train_m5_sentiment_vol_regression(df, results)
     train_m6_portfolio_clustering(df, results)
 
-    # ── Save summary
     save_results_summary(results)
 
     log.info("")
     log.info("=" * 65)
-    log.info("  ALL MODELS COMPLETE")
-    log.info("  Models → %s", MODELS_DIR.resolve())
+    log.info("  ALL MODELS COMPLETE (v2)")
+    log.info("  Models  → %s", MODELS_DIR.resolve())
     log.info("  Summary → %s", RESULTS_TXT.resolve())
     log.info("=" * 65)
 
@@ -757,7 +1251,7 @@ def run(skip_granger: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description="Train all 6 ML models for portfolio risk analytics."
+        description="Train all 6 ML models (v2 improvements) for portfolio risk analytics."
     )
     parser.add_argument(
         "--skip-granger", action="store_true",

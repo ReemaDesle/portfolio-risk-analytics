@@ -13,3 +13,8 @@ python-dotenv
 transformers
 torch
 tqdm
+fastapi
+uvicorn
+python-multipart
+xgboost
+shap

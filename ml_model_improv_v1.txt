@@ -1,0 +1,286 @@
+1) M1-Shock classifier
+"Is this stock experiencing a shock or normal volatility?"
+
+possible loopholes:
+Class imbalance is severe
+Shocks are ~5–10% of trading days. A naive classifier predicts "no shock" always and gets 90% accuracy — meaningless. Must use class_weight="balanced" or SMOTE.
+Label definition leaks future volatility
+If your shock label uses a rolling 20-day window centered on today, it includes 10 future days. Use a trailing window only — rolling mean of past 20 days, not centered.
+Threshold z > 2.0 is arbitrary
+Different stocks have different volatility regimes. A z-score of 2.0 may miss shocks on low-vol stocks and over-flag high-vol stocks. Compute threshold per-stock, not globally.
+
+suggested fixes:
+Fix: use per-stock adaptive thresholds
+For each stock, compute its own rolling mean and std. A shock is when today's vol exceeds its own historical 95th percentile, not a universal z-score.
+Fix: evaluate with F1 and AUC-PR, not accuracy
+On imbalanced data, accuracy is useless. Report precision-recall curve and F1 on the minority (shock) class. A model with 60% F1 on shock days is far better than 90% overall accuracy.
+Fix: walk-forward validation only
+Never use random train/test split. Use expanding window: train on months 1–8, test on 9–12. Then retrain on 1–9, test on 10–12 etc.
+
+algorithm choice:
+i.XGBoost
+Strong default. Handles mixed feature types, built-in regularization, gives SHAP for free.(if shock events>100)
+ii.Random Forest
+More stable than XGBoost on small imbalanced datasets. Good feature importance baseline.(if shock events<100)
+
+required features:
+vol_zscore_5d
+computed · rolling
+vol_zscore_10d
+computed · rolling
+log_return_t-1
+price CSV · lagged
+geo_sentiment_t-1
+news CSV · lagged
+tech_sentiment_t-1
+news CSV · lagged
+fin_sentiment_t-1
+news CSV · lagged
+geo_article_zscore
+news CSV · normalized
+news_available_flag
+engineered · binary
+sentiment_velocity_geo
+engineered · delta
+rolling_mean_return_5d
+computed · rolling
+
+target variable:
+shock_label (0/1) derived from per-stock vol percentile
+
+2) M2 - Recovery predictor
+"How many days until this stock stabilizes after a shock?"
+Regression (survival analysis) · conditional on M1 shock flag
+
+possible loopholes:
+You may have very few shock events
+If your dataset covers 1 year, you might have only 20–40 shock events per stock. Gradient boosting will overfit badly on this. Pool shocks across all stocks to get enough training samples.
+M1 errors cascade into M2
+If M1 misclassifies a normal volatile day as a shock, M2 tries to predict recovery from a non-event. Add a confidence threshold — only run M2 when M1 predicts shock with P > 0.75.
+Censored recoveries are ignored
+A shock that starts 5 days before your data ends never has a recovery label. Dropping these rows biases your model toward fast recoveries. Use survival analysis (Cox model) to handle them correctly.
+Non-stationarity of recovery times
+Recovery from a 2022 rate-hike shock takes different time than a 2024 geopolitical shock. The relationship is not stable. Add year/quarter as a contextual feature.
+
+fixes:
+Fix: pool shocks across all stocks in portfolio
+Treat each shock event as one training sample regardless of stock. This multiplies your training data by N stocks. Use stock sector as a feature to preserve stock-type differences.
+Fix: define recovery operationally
+Recovery = first day where 5-day rolling vol drops below the shock threshold and stays below for 3 consecutive days. This is more robust than "first day below threshold" which can false-trigger.
+
+algorithm:
+Gradient Boosting Regressor
+Straightforward days-to-recovery regression. Works even with small shock event counts.
+
+features:
+shock_magnitude
+vol at shock peak · M1 output
+sentiment_at_shock_day
+all 3 domains · news CSV
+sentiment_velocity_at_shock
+engineered · delta
+pre_shock_vol_baseline
+20d rolling before shock
+sector_encoding
+stock metadata
+market_regime
+VIX proxy or index vol
+portfolio_correlation_at_shock
+engineered · pairwise
+quarter / year
+date · contextual
+news_article_spike
+engineered · binary flag
+
+target variable:
+days_to_recovery (integer) — operationally defined
+
+3) M3-Portfolio risk scorer
+"What is the risk level of my full portfolio right now?"
+Regression producing a continuous 0–100 risk score · portfolio-level · daily
+
+possible loopholes:
+The risk score target doesn't naturally exist in your data
+You must construct it. Using portfolio weighted volatility as the target is reasonable but circular — you're predicting volatility with features derived from volatility. Add an out-of-sample component: use sentiment features only (no vol features) to predict next-day portfolio vol.
+Portfolio weights change as prices move
+A 20% AAPL position becomes 25% after a 25% price run-up. If you use fixed weights from the user's input and don't update daily, your portfolio-level features drift from reality. Recompute weights daily using current prices.
+A single risk number hides dangerous concentration
+Two portfolios can have identical average volatility: one diversified, one 90% in one stock. The single score looks the same. Your dashboard must also show the top risk contributor, not just the score.
+Regime change breaks the model
+A model trained in a bull market has never seen a rate-hike cycle. Consider training separate models per market regime, or adding a regime indicator (e.g. whether the market index is above/below its 200-day MA) as a feature.
+
+fixes:
+Fix: use sentiment-only features as predictors for next-day vol
+The target is tomorrow's portfolio vol. The features are today's sentiment scores and news counts. This eliminates the circularity and forces the model to find true predictive signal.
+Fix: output a score band, not a point
+Use quantile regression to output P25–P75 range. Show "Risk: 62 (range 54–71)" on the dashboard. A beginner investor trusts a range more than a false-precision number.
+
+algorithm:
+Ridge Regression
+Interpretable coefficients show exactly which sentiment domain drives risk up. Good explainability for the dashboard.
+
+features:
+portfolio_weighted_vol_5d
+engineered · portfolio level
+portfolio_weighted_vol_20d
+engineered · portfolio level
+sentiment_exposure_geo
+weight × geo_sentiment · portfolio
+sentiment_exposure_tech
+weight × tech_sentiment · portfolio
+sentiment_exposure_fin
+weight × fin_sentiment · portfolio
+intra_portfolio_correlation
+pairwise rolling 20d
+sector_concentration_hhi
+Herfindahl index of sectors
+cross_domain_divergence
+geo_score − tech_score
+market_regime_flag
+index > 200d MA · binary
+max_single_stock_weight
+portfolio composition
+
+target variable
+next-day portfolio weighted volatility (continuous)
+
+M4- Cross-domain lag predictor
+"A geo-shock just hit energy — when will it reach tech stocks?"
+Time series causality + regression · cross-domain · multi-stock
+
+possible loopholes:
+Spurious Granger causality from shared external driver
+Both geo_sentiment and tech_vol might be caused by a third variable (e.g. Fed announcement) on the same day. Granger will falsely detect "geo causes tech." Always test if the relationship holds after controlling for fin_sentiment as a confounder.
+Time series must be stationary for VAR and Granger
+Stock volatility and sentiment scores are often non-stationary. Run Augmented Dickey-Fuller (ADF) test on every series before modelling. If non-stationary, difference the series first.
+VAR becomes unstable with too many variables
+With 3 sentiment domains × 10 stocks, you have 30+ variables in the VAR. This is massively overparameterized. Use reduced-form VAR: only include portfolio-level averages, not individual stocks.
+Lag length selection is sensitive
+Using AIC to select lag length can overfit on short series. Use BIC instead — it penalizes complexity more aggressively on small samples.
+
+fixes:
+Fix: run Granger pairwise, not VAR, as primary model
+Test each (domain, stock) pair with bivariate Granger test. Report which pairs pass the test at p < 0.05. This is more interpretable than a VAR and maps directly to your H4/H5 hypotheses.
+Fix: validate lag with out-of-sample CCF plot
+After finding the peak lag statistically, plot the actual CCF for that domain pair and show it in the dashboard. A beginner investor can see "geo news leads tech stocks by 3 days" in the chart directly.
+
+algorithm:
+1.Granger Causality Test
+Statistical test: does geo_sentiment at t-n predict tech_vol at t better than tech_vol alone? Run per domain pair.
+2.Cross-Correlation Function (CCF)
+Visualizes the correlation at each lag value. Shows the lag with peak correlation — easy to explain
+CCF first to discover lags visually → Granger to validate statistically → report both in your project. Never report Granger alone, because a significant p-value without a visible CCF pattern is hard to trust.
+
+features:
+geo_sentiment_t-1 to t-7
+news CSV · lagged series
+fin_sentiment_t-1 to t-7
+news CSV · lagged series
+tech_sentiment_t-1 to t-7
+news CSV · lagged series
+portfolio_vol_t-1 to t-5
+computed · lagged series
+differenced sentiment series
+engineered · for stationarity
+ADF test statistic
+stationarity check
+domain_article_count_t-1
+news CSV · lagged
+cross_domain_lag_matrix
+engineered · pairwise CCF
+
+target variable:
+Lag value (integer days) where cross-correlation peaks per domain–stock pair
+
+5) M5 Sentiment–volatility regression
+"Which news domain best predicts each stock's volatility?"
+Multi-feature regression · per-stock or per-portfolio · interpretability-first
+
+possible loopholes:
+Geo, fin, tech sentiments are highly correlated
+Major events drive all three sentiment scores in the same direction simultaneously. Lasso will pick one arbitrarily and zero the others — misleading. Always check domain correlation matrix first. If r > 0.7 between two domains, they can't both be meaningful predictors simultaneously.
+OLS/Lasso assumes no autocorrelation in residuals
+Stock volatility has strong autocorrelation (GARCH effects). Plain regression residuals will be autocorrelated, violating model assumptions and making standard errors unreliable. Use Newey-West standard errors or add lagged volatility as a control variable.
+Coefficients are unstable across market regimes
+The relationship between geo sentiment and vol changes sign in different regimes. A single trained model averages this out, hiding the most interesting finding. Run rolling-window regression (e.g. 90-day window) to show how the coefficient changes over time.
+
+fixes:
+Fix: report SHAP not just coefficients
+A Lasso coefficient says "on average, geo sentiment has this effect." A SHAP value says "on this specific day, geo sentiment contributed +X to the risk score." For the dashboard's "what to watch" advice, per-day SHAP is far more useful.
+Fix: run per-stock and per-cluster, not globally
+A single model across all stocks hides that gold miners respond to geo sentiment while SaaS companies respond to tech sentiment. Run M5 separately for each M6 cluster. The differences between clusters are your best finding.
+
+algorithms:
+1.Ridge Regression
+Keeps all coefficients but shrinks them. Use when domains are correlated — Lasso arbitrarily picks one, Ridge distributes.
+
+features:
+geo_sentiment_3d_rolling
+engineered · smoothed
+fin_sentiment_3d_rolling
+engineered · smoothed
+tech_sentiment_3d_rolling
+engineered · smoothed
+geo_sentiment_velocity
+engineered · delta
+fin_sentiment_velocity
+engineered · delta
+tech_sentiment_velocity
+engineered · delta
+sentiment_interaction_geo×fin
+engineered · interaction
+lagged_vol_t-1
+computed · autocorrelation control
+article_count_zscore × sentiment
+engineered · reliability weight
+market_regime_flag
+binary · regime control
+
+target variable:
+stock_volatility_5d or log_return (tested separately)
+
+6) M6:Portfolio clustering
+"What type of portfolio is this, and how sensitive is it?"
+Unsupervised clustering · portfolio-level · one label per user portfolio
+
+possible loopholes:
+Clusters might just reflect sector concentration, not news sensitivity
+A "tech-heavy" portfolio clusters together because of sector weights, not because it's actually sensitive to tech sentiment. Verify each cluster actually has higher correlation with its "named" sentiment domain, or the clustering is just a sector label.
+
+fixes:
+Fix: cluster on sensitivity features, not on raw weights
+The clustering features should be the M5 coefficients per domain (how much does geo/fin/tech sentiment predict this portfolio's volatility?) rather than raw sector weights. This ensures clusters reflect news sensitivity, not just composition.
+Fix: name clusters from data, not assumptions
+After clustering, compute the mean SHAP values per cluster across M1/M3/M5 outputs. Let the data name the cluster: "Cluster A = portfolios where geo sentiment drives 60%+ of risk." Never assume a cluster is "defensive" — verify it empirically.
+
+algorithm:
+1.K-Means (k=3–5)
+Fast, interpretable. Use elbow method + silhouette score to find k. Label clusters manually after inspection.
+2.Hierarchical clustering
+Dendrogram shows which portfolios are most similar. Doesn't require k upfront. Better for small sample counts.
+
+features:
+m5_coeff_geo
+M5 output · sensitivity
+m5_coeff_fin
+M5 output · sensitivity
+m5_coeff_tech
+M5 output · sensitivity
+mean_shock_frequency
+M1 output · aggregate
+mean_recovery_days
+M2 output · aggregate
+sector_concentration_hhi
+portfolio composition
+portfolio_beta_to_index
+computed · market sensitivity
+safe_haven_weight
+gold/bonds/utilities %
+intra_portfolio_correlation
+pairwise rolling 20d
+
+target variable:
+Cluster label (no ground truth — validate with silhouette score)
+
+
+
