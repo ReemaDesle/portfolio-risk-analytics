@@ -119,6 +119,19 @@ to do for 18/04/26(ash):
 2. run sentiment analysis on financial news
 3. create master_data.csv
 
+work done(ash): 18/04/26
+1. Finished financial news scraping for entire time frame(web archive and browser based)
+2. Ran sentiment analysis on financial news(FinBERT in web colab)
+3. Fixed train_models, ran all models for entire data
+4. Ran ARIMA for financial news and daily prices
+5. Integrated new models into frontend and backend
+
+to do:
+1. Fix frontend to get user input 
+2. Check if models give diff results based on diff inputs
+3. Is xAI being actually used?
+4. Can we integrate LLM APIS here(grok)?
+
 output:
 13:29:06  INFO        COMPLETE
 13:29:06  INFO        Total articles    : 3236
