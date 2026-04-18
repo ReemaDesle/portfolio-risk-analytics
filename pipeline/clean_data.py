@@ -54,9 +54,9 @@ RAW_NEWS_DIR  = ROOT_DIR / "data" / "raw" / "news"
 RAW_DIR       = ROOT_DIR / "data" / "raw" / "tickers"
 PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 
-FINANCIAL_SCORED = RAW_NEWS_DIR / "financial_news_scored.csv"
-GEO_SCORED       = RAW_NEWS_DIR / "geo_news_scored.csv"
-TECH_SCORED      = RAW_NEWS_DIR / "tech_news_scored.csv"
+FINANCIAL_SCORED = RAW_NEWS_DIR / "financial_news_scored_v3.csv"
+GEO_SCORED       = RAW_NEWS_DIR / "geo_news_scored_v3.csv"
+TECH_SCORED      = RAW_NEWS_DIR / "tech_news_scored_v3.csv"
 PRICES_CSV       = RAW_DIR / "prices_daily.csv"
 
 # Standard columns expected from every scored CSV
