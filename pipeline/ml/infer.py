@@ -190,9 +190,9 @@ def infer_m2_recovery(df_feat: pd.DataFrame, portfolio: str) -> dict:
             row[c] = 0.0
     row = row[feat_cols]
 
-    p25 = max(1.0, float(q25_model.predict(row.values)[0]))
-    p50 = max(p25,  float(q50_model.predict(row.values)[0]))
-    p75 = max(p50,  float(q75_model.predict(row.values)[0]))
+    p25 = max(1.0, float(q25_model.predict(row)[0]))
+    p50 = max(p25,  float(q50_model.predict(row)[0]))
+    p75 = max(p50,  float(q75_model.predict(row)[0]))
 
     return {
         "available":    True,
@@ -238,8 +238,8 @@ def infer_m3_risk_score(df_feat: pd.DataFrame, portfolio: str) -> dict:
 
     X_s    = scaler.transform(row.values)
     point  = float(model.predict(X_s)[0])
-    p25    = float(q25_mdl.predict(X_s)[0]) if q25_mdl else point * 0.7
-    p75    = float(q75_mdl.predict(X_s)[0]) if q75_mdl else point * 1.3
+    p25    = float(q25_mdl.predict(pd.DataFrame(X_s, columns=feat_cols))[0]) if q25_mdl else point * 0.7
+    p75    = float(q75_mdl.predict(pd.DataFrame(X_s, columns=feat_cols))[0]) if q75_mdl else point * 1.3
     p25, p75 = min(p25, point), max(p75, point)
 
     if point > 0.025:
