@@ -10,103 +10,92 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
-def run_arimax_forecast(sentiment_path, prices_path, target_ticker='SPY', forecast_steps=30, lag=0, use_zscore=False):
+def run_arimax_forecast(sentiment_path=None, prices_path=None, target_ticker='SPY', forecast_steps=10, lag=1, use_zscore=True):
     """
     Fits an ARIMAX model using Sentiment as an exogenous variable.
-    Includes optional 'lag' and 'zscore' parameters for feature engineering.
+    Returns a dictionary of results for API consumption.
     """
-    logger.info(f"Loading data: Ticker={target_ticker}, Lag={lag}, Z-Score={use_zscore}")
-    
-    # 1. Load Datasets
-    sentiment_df = pd.read_csv(sentiment_path, index_col='date', parse_dates=True)
-    prices_df = pd.read_csv(prices_path, index_col='date', parse_dates=True)
-    
-    # Apply Lag to sentiment if specified
-    if lag > 0:
-        sentiment_df['sentiment_avg'] = sentiment_df['sentiment_avg'].shift(lag)
-        sentiment_df = sentiment_df.dropna()
+    if sentiment_path is None:
+        sentiment_path = os.path.join(os.path.dirname(__file__), "../../data/processed/sentiment_daily_index.csv")
+    if prices_path is None:
+        prices_path = os.path.join(os.path.dirname(__file__), "../../data/raw/tickers/prices_daily.csv")
 
-    # Apply Z-Score normalization if specified
-    if use_zscore:
-        s_mean = sentiment_df['sentiment_avg'].mean()
-        s_std = sentiment_df['sentiment_avg'].std()
-        sentiment_df['sentiment_avg'] = (sentiment_df['sentiment_avg'] - s_mean) / s_std
-        logger.info(f"Sentiment Z-Scored: Mean={s_mean:.4f}, Std={s_std:.4f}")
+    try:
+        logger.info(f"Loading data: Ticker={target_ticker}, Lag={lag}, Z-Score={use_zscore}")
+        
+        # 1. Load Datasets
+        sentiment_df = pd.read_csv(sentiment_path, index_col='date', parse_dates=True)
+        prices_df = pd.read_csv(prices_path, index_col='date', parse_dates=True)
+        
+        if target_ticker not in prices_df.columns:
+            return {"error": f"Ticker {target_ticker} not found in prices data"}
 
-    # 2. Alignment & Preprocessing
-    target_series = prices_df[target_ticker].pct_change().dropna()
-    merged = pd.merge(target_series, sentiment_df['sentiment_avg'], left_index=True, right_index=True, how='inner')
-    merged.columns = ['returns', 'sentiment']
-    
-    logger.info(f"Aligned dataset size: {len(merged)} trading days.")
+        # Apply Lag to sentiment if specified
+        if lag > 0:
+            sentiment_df['sentiment_avg'] = sentiment_df['sentiment_avg'].shift(lag)
+            sentiment_df = sentiment_df.dropna()
 
-    # 3. Train/Test Split (80/20)
-    split_idx = int(len(merged) * 0.8)
-    train_data = merged.iloc[:split_idx]
-    test_data = merged.iloc[split_idx:]
+        # Apply Z-Score normalization if specified
+        if use_zscore:
+            s_mean = sentiment_df['sentiment_avg'].mean()
+            s_std = sentiment_df['sentiment_avg'].std()
+            sentiment_df['sentiment_avg'] = (sentiment_df['sentiment_avg'] - s_mean) / s_std
 
-    # 4. Fit ARIMAX Model
-    model = SARIMAX(train_data['returns'], 
-                    exog=train_data['sentiment'], 
-                    order=(1, 0, 1), 
-                    enforce_stationarity=False, 
-                    enforce_invertibility=False)
-    results = model.fit(disp=False)
-    
-    # 5. Forecast
-    forecast = results.get_forecast(steps=len(test_data), exog=test_data['sentiment'])
-    mean_forecast = forecast.summary_frame()['mean']
-    conf_int = forecast.summary_frame()[['mean_ci_lower', 'mean_ci_upper']]
-    
-    # 6. Evaluation
-    mse = mean_squared_error(test_data['returns'], mean_forecast)
-    logger.info(f"Model Mean Squared Error: {mse:.6f}")
-    
-    # 7. Sentiment Impact Analysis
-    sentiment_coef = results.params['sentiment']
-    p_value = results.pvalues['sentiment']
-    logger.info(f"Sentiment Coefficient: {sentiment_coef:.4f} (p-value: {p_value:.4f})")
-    
-    if p_value < 0.05:
-        logger.info(f"RESULT: Sentiment (Lag={lag}, Z={use_zscore}) is STATISTICALLY SIGNIFICANT on {target_ticker}!")
-    elif p_value < 0.10:
-        logger.info(f"RESULT: Sentiment (Lag={lag}, Z={use_zscore}) approaches boundary significance (90%) for {target_ticker}.")
-    else:
-        logger.info(f"RESULT: Sentiment (Lag={lag}, Z={use_zscore}) not significant at 90% for {target_ticker}.")
+        # 2. Alignment & Preprocessing
+        target_series = prices_df[target_ticker].pct_change().dropna()
+        merged = pd.merge(target_series, sentiment_df['sentiment_avg'], left_index=True, right_index=True, how='inner')
+        merged.columns = ['returns', 'sentiment']
+        
+        if len(merged) < 20:
+            return {"error": "Insufficient data for ARIMA modeling"}
 
-    # 8. Plotting
-    plt.figure(figsize=(12, 6))
-    plt.plot(test_data.index, test_data['returns'], label='Actual Returns', alpha=0.5)
-    plt.plot(test_data.index, mean_forecast, label=f'ARIMAX Forecast', color='red')
-    plt.fill_between(test_data.index, conf_int['mean_ci_lower'], conf_int['mean_ci_upper'], color='pink', alpha=0.3)
-    plt.title(f"ARIMAX Forecast: {target_ticker} (Lag={lag}, Z={use_zscore})")
-    plt.legend()
-    
-    output_dir = "reports/plots"
-    os.makedirs(output_dir, exist_ok=True)
-    suffix = f"_lag{lag}_z" if use_zscore else f"_lag{lag}"
-    plt.savefig(f"{output_dir}/arimax_{target_ticker}{suffix}.png")
-    plt.savefig(f"{output_dir}/arimax_{target_ticker}.png") # Overwrite primary
-    
-    return results
+        # 3. Fit ARIMAX Model on available data
+        model = SARIMAX(merged['returns'], 
+                        exog=merged['sentiment'], 
+                        order=(1, 0, 1), 
+                        enforce_stationarity=False, 
+                        enforce_invertibility=False)
+        results = model.fit(disp=False)
+        
+        # 4. Forecast the next 'forecast_steps'
+        # For simplicity in "live" mode, we treat the last known sentiment as the exog for forecast
+        last_sentiment = merged['sentiment'].iloc[-1]
+        exog_forecast = np.full((forecast_steps, 1), last_sentiment)
+        
+        forecast = results.get_forecast(steps=forecast_steps, exog=exog_forecast)
+        summary = forecast.summary_frame()
+        
+        # 5. Metrics
+        sentiment_coeff = results.params['sentiment']
+        p_value = results.pvalues['sentiment']
+        
+        # 6. Prepare Return Dict
+        forecast_list = []
+        for i, (idx, row) in enumerate(summary.iterrows()):
+            forecast_list.append({
+                "step": i + 1,
+                "value": round(float(row['mean']), 6),
+                "lower": round(float(row['mean_ci_lower']), 6),
+                "upper": round(float(row['mean_ci_upper']), 6)
+            })
+
+        return {
+            "ticker": target_ticker,
+            "model": "ARIMAX(1,0,1)",
+            "sentiment_coeff": round(float(sentiment_coeff), 6),
+            "p_value": round(float(p_value), 6),
+            "significant": bool(p_value < 0.10),
+            "significance_level": "90%" if p_value < 0.10 else None,
+            "lag": lag,
+            "z_scored": use_zscore,
+            "forecast": forecast_list,
+            "interpretation": f"Sentiment impact is {('significant' if p_value < 0.10 else 'not significant')} with a coefficient of {sentiment_coeff:.4f}."
+        }
+
+    except Exception as e:
+        logger.error(f"ARIMAX Error for {target_ticker}: {e}")
+        return {"error": str(e)}
 
 if __name__ == "__main__":
-    SENTIMENT_INDEX = "data/processed/sentiment_daily_index.csv"
-    PRICES_DATA = "data/raw/tickers/prices_daily.csv"
-    
-    # Optimized Discovery: Run NVDA and SPY with Lag=1 + Z-Score
-    print(f"\n{'='*40}")
-    print(f" OPTIMIZED FORECASTING: NVDA (LAG-1, Z-SCORE)")
-    print(f"{'='*40}")
-    try:
-        run_arimax_forecast(SENTIMENT_INDEX, PRICES_DATA, target_ticker='NVDA', lag=1, use_zscore=True)
-    except Exception as e:
-        logger.error(f"Failed to process NVDA: {e}")
-
-    print(f"\n{'='*40}")
-    print(f" OPTIMIZED FORECASTING: SPY (LAG-1, Z-SCORE)")
-    print(f"{'='*40}")
-    try:
-        run_arimax_forecast(SENTIMENT_INDEX, PRICES_DATA, target_ticker='SPY', lag=1, use_zscore=True)
-    except Exception as e:
-        logger.error(f"Failed to process SPY: {e}")
+    res = run_arimax_forecast(target_ticker='NVDA')
+    print(res)

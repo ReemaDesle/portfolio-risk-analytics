@@ -277,200 +277,155 @@ def get_feature_columns(df: pd.DataFrame, patterns: list) -> list:
 def train_m1_shock_classifier(df: pd.DataFrame, results: dict):
     """
     Binary classifier: predict if tomorrow will be a shock day.
-
-    Improvements:
-    - Per-portfolio adaptive 95th-pct threshold (not global z > 2.0)
-    - Walk-forward expanding-window CV (not simple chronological split)
-    - XGBoost if shock events ≥ 100; RandomForest if shock events < 100
-    - Evaluates Shock-class F1 + AUC-PR (not just accuracy/AUC-ROC)
-    - New features: vol_zscore_5d, sentiment_velocity, news_available_flag,
-      geo_article_zscore, rolling_mean_return_5d, market_regime_flag
+    Loops through all 4 archetypes and trains a specific model for each.
     """
-    log.info("── [M1] Shock Classifier (adaptive threshold + walk-forward CV) ──")
+    log.info("── [M1] Shock Classifier (Multi-Archetype Expansion) ──")
 
     from sklearn.metrics import (
-        f1_score, roc_auc_score, average_precision_score
+        f1_score, roc_auc_score, average_precision_score, precision_recall_curve
     )
     from sklearn.ensemble import RandomForestClassifier
 
-    TARGET = "shock_tech"
-    if TARGET not in df.columns:
-        log.warning("  Target '%s' missing. Skipping M1.", TARGET)
-        results["M1"] = f"SKIPPED — {TARGET} column missing"
-        return
+    results["M1"] = {}
+    m1_models = {}
 
-    # ── Feature prefixes (v2: broader set)
-    feature_prefixes = [
-        "vol_zscore_5d_",          # per-stock adaptive (NEW)
-        "z_sentiment_score_",
-        "z_avg_prob_neg_",
-        "z_lag1_", "z_lag2_", "z_lag3_",
-        "article_spike_",
-        "article_zscore_",         # geo_article_zscore (NEW)
-        "news_available_",         # news_available_flag (NEW)
-        "z_sentiment_velocity_",   # velocity (NEW)
-        "vol5_tech", "vol10_tech", "vol20_tech",
-        "ret_tech",
-        "rolling_mean_return_5d_tech",  # NEW
-        "market_regime_flag",
-    ]
-    feat_cols = [c for c in df.columns if any(c.startswith(p) for p in feature_prefixes)]
-    if not feat_cols:
-        results["M1"] = "SKIPPED — no feature columns found"
-        return
-
-    df_m1 = df[feat_cols + [TARGET]].copy()
-    df_m1[TARGET] = df_m1[TARGET].shift(-1)   # predict TOMORROW's shock
-    df_m1 = df_m1.dropna()
-
-    if len(df_m1) < 10:
-        log.warning("  Insufficient rows (%d). Skipping M1.", len(df_m1))
-        results["M1"] = f"SKIPPED — only {len(df_m1)} valid rows"
-        return
-
-    X = df_m1[feat_cols].values
-    y = df_m1[TARGET].astype(int).values
-
-    n_shock_events = int(y.sum())
-    log.info("  Shock events: %d / %d (%.1f%%)",
-             n_shock_events, len(y), 100 * n_shock_events / max(len(y), 1))
-
-    # ── Walk-forward CV
-    from sklearn.metrics import precision_recall_curve
-    wf_f1s, wf_aucs, wf_aprs = [], [], []
-    wf_f1s_calibrated, wf_thresholds = [], []
-
-    for train_split, test_split in walk_forward_splits(df_m1, n_splits=3):
-        Xtr = train_split[feat_cols].values
-        ytr = train_split[TARGET].astype(int).values
-        Xte = test_split[feat_cols].values
-        yte = test_split[TARGET].astype(int).values
-
-        if len(yte) == 0 or yte.sum() == 0:
+    for pname in PORTFOLIOS:
+        TARGET = f"shock_{pname}"
+        if TARGET not in df.columns:
+            log.warning("  Target '%s' missing. Skipping M1 for %s.", TARGET, pname)
             continue
 
-        pos_weight = max(1, (ytr == 0).sum() / max((ytr == 1).sum(), 1))
+        log.info("  Training M1 for archetype: %s", pname)
 
-        # Algorithm choice per ml_model_improv_v1
+        # ── Feature prefixes (v2: broader set, localized to pname)
+        feature_prefixes = [
+            "vol_zscore_5d_",          # per-stock adaptive
+            "z_sentiment_score_",
+            "z_avg_prob_neg_",
+            "z_lag1_", "z_lag2_", "z_lag3_",
+            "article_spike_",
+            "article_zscore_",
+            "news_available_",
+            "z_sentiment_velocity_",
+            f"vol5_{pname}", f"vol10_{pname}", f"vol20_{pname}",
+            f"ret_{pname}",
+            f"rolling_mean_return_5d_{pname}",
+            "market_regime_flag",
+        ]
+        feat_cols = [c for c in df.columns if any(c.startswith(p) for p in feature_prefixes)]
+        if not feat_cols:
+            log.warning("  No feature columns found for %s. Skipping.", pname)
+            continue
+
+        df_m1 = df[feat_cols + [TARGET]].copy()
+        df_m1[TARGET] = df_m1[TARGET].shift(-1)   # predict TOMORROW's shock
+        df_m1 = df_m1.dropna()
+
+        if len(df_m1) < 10:
+            log.warning("  Insufficient rows (%d) for %s. Skipping.", len(df_m1), pname)
+            continue
+
+        X = df_m1[feat_cols].values
+        y = df_m1[TARGET].astype(int).values
+
+        n_shock_events = int(y.sum())
+        
+        # ── Walk-forward CV
+        wf_f1s, wf_aucs, wf_aprs = [], [], []
+        wf_f1s_calibrated, wf_thresholds = [], []
+
+        for train_split, test_split in walk_forward_splits(df_m1, n_splits=3):
+            Xtr = train_split[feat_cols].values
+            ytr = train_split[TARGET].astype(int).values
+            Xte = test_split[feat_cols].values
+            yte = test_split[TARGET].astype(int).values
+
+            if len(yte) == 0 or yte.sum() == 0:
+                continue
+
+            pos_weight = max(1, (ytr == 0).sum() / max((ytr == 1).sum(), 1))
+
+            # Algorithm choice: XGBoost if shock events ≥ 100
+            if n_shock_events >= 100:
+                try:
+                    from xgboost import XGBClassifier
+                    clf = XGBClassifier(
+                        n_estimators=200, max_depth=4, learning_rate=0.05,
+                        scale_pos_weight=pos_weight, random_state=42,
+                        eval_metric="logloss", verbosity=0,
+                    )
+                except ImportError:
+                    clf = RandomForestClassifier(n_estimators=200, max_depth=4,
+                                                 class_weight="balanced", random_state=42)
+            else:
+                clf = RandomForestClassifier(n_estimators=200, max_depth=4,
+                                             class_weight="balanced", random_state=42)
+
+            clf.fit(Xtr, ytr)
+            yhat  = clf.predict(Xte)
+            yprob = clf.predict_proba(Xte)[:, 1]
+
+            wf_f1s.append(f1_score(yte, yhat, zero_division=0))
+            if len(np.unique(yte)) > 1:
+                wf_aucs.append(roc_auc_score(yte, yprob))
+                wf_aprs.append(average_precision_score(yte, yprob))
+
+                # ── Calibrate threshold
+                prec, rec, threshs = precision_recall_curve(yte, yprob)
+                f1_scores = np.where(
+                    (prec[:-1] + rec[:-1]) > 0,
+                    2 * prec[:-1] * rec[:-1] / (prec[:-1] + rec[:-1]),
+                    0.0,
+                )
+                best_idx  = int(np.argmax(f1_scores))
+                best_thr  = float(threshs[best_idx])
+                yhat_cal  = (yprob >= best_thr).astype(int)
+                wf_f1s_calibrated.append(f1_score(yte, yhat_cal, zero_division=0))
+                wf_thresholds.append(best_thr)
+
+        mean_f1            = float(np.mean(wf_f1s))             if wf_f1s            else 0.0
+        mean_auc           = float(np.mean(wf_aucs))            if wf_aucs           else 0.0
+        mean_apr           = float(np.mean(wf_aprs))            if wf_aprs           else 0.0
+        mean_f1_calibrated = float(np.mean(wf_f1s_calibrated)) if wf_f1s_calibrated else 0.0
+        optimal_threshold  = float(np.median(wf_thresholds))   if wf_thresholds     else 0.5
+
+        # ── Final model
+        pos_weight = max(1, (y == 0).sum() / max((y == 1).sum(), 1))
         if n_shock_events >= 100:
             try:
                 from xgboost import XGBClassifier
-                clf = XGBClassifier(
-                    n_estimators=200, max_depth=4, learning_rate=0.05,
-                    scale_pos_weight=pos_weight, random_state=42,
-                    eval_metric="logloss", verbosity=0,
-                )
+                final_model = XGBClassifier(n_estimators=200, max_depth=4, learning_rate=0.05,
+                                           scale_pos_weight=pos_weight, random_state=42,
+                                           eval_metric="logloss", verbosity=0)
             except ImportError:
-                clf = RandomForestClassifier(n_estimators=200, max_depth=4,
-                                             class_weight="balanced", random_state=42)
+                final_model = RandomForestClassifier(n_estimators=200, max_depth=4,
+                                                     class_weight="balanced", random_state=42)
         else:
-            clf = RandomForestClassifier(n_estimators=200, max_depth=4,
-                                         class_weight="balanced", random_state=42)
-
-        clf.fit(Xtr, ytr)
-        yhat  = clf.predict(Xte)         # default 0.5 threshold
-        yprob = clf.predict_proba(Xte)[:, 1]
-
-        wf_f1s.append(f1_score(yte, yhat, zero_division=0))
-        if len(np.unique(yte)) > 1:
-            wf_aucs.append(roc_auc_score(yte, yprob))
-            wf_aprs.append(average_precision_score(yte, yprob))
-
-            # ── Calibrate threshold: sweep PR curve to find best F1 threshold
-            prec, rec, threshs = precision_recall_curve(yte, yprob)
-            # F1 at each threshold (prec/rec have one extra point at end)
-            f1_scores = np.where(
-                (prec[:-1] + rec[:-1]) > 0,
-                2 * prec[:-1] * rec[:-1] / (prec[:-1] + rec[:-1]),
-                0.0,
-            )
-            best_idx  = int(np.argmax(f1_scores))
-            best_thr  = float(threshs[best_idx])
-            yhat_cal  = (yprob >= best_thr).astype(int)
-            wf_f1s_calibrated.append(f1_score(yte, yhat_cal, zero_division=0))
-            wf_thresholds.append(best_thr)
-
-    mean_f1            = float(np.mean(wf_f1s))             if wf_f1s            else float("nan")
-    mean_auc           = float(np.mean(wf_aucs))            if wf_aucs           else float("nan")
-    mean_apr           = float(np.mean(wf_aprs))            if wf_aprs           else float("nan")
-    mean_f1_calibrated = float(np.mean(wf_f1s_calibrated)) if wf_f1s_calibrated else float("nan")
-    # Use median threshold across folds as the production threshold
-    optimal_threshold  = float(np.median(wf_thresholds))   if wf_thresholds     else 0.5
-
-    log.info(
-        "  Walk-forward CV → F1@0.5: %.4f | F1@%.2f(calibrated): %.4f "
-        "| AUC-ROC: %.4f | AUC-PR: %.4f",
-        mean_f1, optimal_threshold, mean_f1_calibrated, mean_auc, mean_apr
-    )
-
-    # ── Final model on all data
-    pos_weight = max(1, (y == 0).sum() / max((y == 1).sum(), 1))
-    if n_shock_events >= 100:
-        try:
-            from xgboost import XGBClassifier
-            final_model = XGBClassifier(
-                n_estimators=200, max_depth=4, learning_rate=0.05,
-                scale_pos_weight=pos_weight, random_state=42,
-                eval_metric="logloss", verbosity=0,
-            )
-            log.info("  Using XGBoost (shock_events=%d ≥ 100)", n_shock_events)
-        except ImportError:
-            log.warning("  xgboost not installed — falling back to RandomForest.")
             final_model = RandomForestClassifier(n_estimators=200, max_depth=4,
                                                  class_weight="balanced", random_state=42)
-    else:
-        final_model = RandomForestClassifier(n_estimators=200, max_depth=4,
-                                             class_weight="balanced", random_state=42)
-        log.info("  Using RandomForest (shock_events=%d < 100)", n_shock_events)
 
-    final_model.fit(X, y)
+        final_model.fit(X, y)
 
-    # ── SHAP values (best-effort)
-    shap_available = False
-    try:
-        import shap
-        explainer  = shap.TreeExplainer(final_model)
-        shap_vals  = explainer.shap_values(X)
-        # For classifiers, shap_values may return list; take class-1 values
-        sv = shap_vals[1] if isinstance(shap_vals, list) else shap_vals
-        pd.DataFrame(sv, columns=feat_cols).to_csv(MODELS_DIR / "m1_shap_values.csv", index=False)
-        shap_available = True
-        log.info("  SHAP values saved → models/ml/m1_shap_values.csv")
-    except Exception as e:
-        log.info("  SHAP skipped for M1: %s", e)
+        # Save model
+        joblib.dump(
+            {"model": final_model, "features": feat_cols, "optimal_threshold": optimal_threshold},
+            MODELS_DIR / f"m1_shock_classifier_{pname}.pkl"
+        )
+        log.info("    ✔ Saved models/ml/m1_shock_classifier_%s.pkl", pname)
 
-    # Feature importances
-    if hasattr(final_model, "feature_importances_"):
-        fi = pd.DataFrame({"feature": feat_cols, "importance": final_model.feature_importances_})
-    else:
-        fi = pd.DataFrame({"feature": feat_cols, "importance": [0.0] * len(feat_cols)})
-    fi.sort_values("importance", ascending=False).to_csv(
-        MODELS_DIR / "m1_feature_importance.csv", index=False
-    )
+        results["M1"][pname] = {
+            "n_shock_events": n_shock_events,
+            "f1_calibrated":  round(mean_f1_calibrated, 4),
+            "auc_roc":        round(mean_auc, 4),
+            "threshold":      round(optimal_threshold, 3),
+        }
+        
+        # Store for M2 if needed (using tech as primary example for M2 gate if desired, 
+        # but the M2 gate logic in the original code only expects one M1)
+        if pname == "tech":
+            m1_models["tech"] = (final_model, feat_cols)
 
-    # Save model bundle including optimal threshold for inference
-    joblib.dump(
-        {"model": final_model, "features": feat_cols,
-         "optimal_threshold": optimal_threshold},
-        MODELS_DIR / "m1_shock_classifier.pkl"
-    )
-
-    results["M1"] = {
-        "algorithm":                 "XGBoost" if n_shock_events >= 100 else "RandomForest",
-        "n_shock_events":            n_shock_events,
-        "walk_forward_shock_F1":     round(mean_f1, 4),
-        "walk_forward_F1_calibrated":round(mean_f1_calibrated, 4),
-        "optimal_threshold":         round(optimal_threshold, 3),
-        "walk_forward_AUC_ROC":      round(mean_auc, 4),
-        "walk_forward_AUC_PR":       round(mean_apr, 4),
-        "shap_available":            shap_available,
-        "top_features":              fi.head(5).to_dict("records"),
-    }
-    log.info("  ✔ M1 saved → models/ml/m1_shock_classifier.pkl")
-    log.info("    Optimal threshold: %.3f | Calibrated F1: %.4f",
-             optimal_threshold, mean_f1_calibrated)
-    # Return model + feature cols so M2 can use M1 predictions as a gate
-    return final_model, feat_cols
+    return m1_models.get("tech", (None, None))
 
 
 # ══════════════════════════════════════════════

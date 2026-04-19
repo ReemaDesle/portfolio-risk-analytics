@@ -3,12 +3,13 @@ import axios from 'axios';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   AreaChart, Area, LineChart, Line, RadarChart, Radar, PolarGrid,
-  PolarAngleAxis, PolarRadiusAxis, ReferenceLine
+  PolarAngleAxis, PolarRadiusAxis, ReferenceLine, Cell
 } from 'recharts';
 import {
   ShieldCheck, TrendingUp, TrendingDown, AlertTriangle, Activity,
   Zap, RefreshCw, ArrowUpRight, ArrowDownRight, Minus, Globe,
-  DollarSign, Cpu, Eye, Target
+  DollarSign, Cpu, Eye, Target, Calendar, ListFilter, LayoutDashboard,
+  Settings, Info, ChevronRight, CheckCircle2, FlaskConical, BarChart3, Database
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:8000';
@@ -28,673 +29,561 @@ const C = {
 };
 
 // ── Reusable primitives ────────────────────────────────────────────────────
-const Card = ({ children, style = {}, glow }) => (
-  <div style={{
-    background: C.card,
-    border: `1px solid ${glow ? glow : C.border}`,
-    borderRadius: 16,
-    padding: '1.5rem',
-    boxShadow: glow ? `0 0 24px ${glow}22` : 'none',
-    ...style,
-  }}>
+const Card = ({ children, style = {}, glow, onClick }) => (
+  <div 
+    onClick={onClick}
+    style={{
+      background: C.card,
+      border: `1px solid ${glow ? glow : C.border}`,
+      borderRadius: 16,
+      padding: '1.25rem',
+      boxShadow: glow ? `0 0 24px ${glow}22` : 'rgba(0,0,0,0.2) 0 4px 12px',
+      cursor: onClick ? 'pointer' : 'default',
+      transition: 'transform 0.2s ease, box-shadow 0.2s ease',
+      ...style,
+    }}
+    onMouseEnter={e => onClick && (e.currentTarget.style.transform = 'translateY(-2px)')}
+    onMouseLeave={e => onClick && (e.currentTarget.style.transform = 'translateY(0)')}
+  >
     {children}
   </div>
 );
 
 const Label = ({ children, style = {} }) => (
-  <div style={{ color: C.muted, fontSize: '0.72rem', fontWeight: 700,
-    letterSpacing: '0.12em', textTransform: 'uppercase', ...style }}>
+  <div style={{ color: C.muted, fontSize: '0.68rem', fontWeight: 700,
+    letterSpacing: '0.12em', textTransform: 'uppercase', marginBottom: 4, ...style }}>
     {children}
   </div>
 );
 
-const BigNum = ({ children, color = C.accent, size = '2rem' }) => (
-  <div style={{ color, fontSize: size, fontWeight: 800, lineHeight: 1.1, marginTop: 6 }}>
+const BigNum = ({ children, color = C.accent, size = '1.8rem' }) => (
+  <div style={{ color, fontSize: size, fontWeight: 800, lineHeight: 1.1 }}>
     {children}
   </div>
 );
 
-const Badge = ({ label, color = C.accent }) => (
+const Badge = ({ label, color = C.accent, style = {} }) => (
   <span style={{
     background: `${color}22`, color, border: `1px solid ${color}44`,
-    borderRadius: 999, padding: '2px 10px', fontSize: '0.71rem', fontWeight: 700,
-    letterSpacing: '0.06em',
+    borderRadius: 8, padding: '2px 8px', fontSize: '0.68rem', fontWeight: 700,
+    ...style
   }}>
     {label}
   </span>
 );
 
-const SignalDot = ({ color }) => (
-  <span style={{
-    display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
-    background: color, marginRight: 6, boxShadow: `0 0 6px ${color}`,
-  }} />
+const SectionHeading = ({ icon: Icon, title, sub }) => (
+  <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: 12 }}>
+    <div style={{ background: `${C.accent}15`, padding: 10, borderRadius: 12, border: `1px solid ${C.accent}33` }}>
+      <Icon size={20} color={C.accent} />
+    </div>
+    <div>
+      <h2 style={{ fontSize: '1.1rem', fontWeight: 800, margin: 0 }}>{title}</h2>
+      {sub && <p style={{ color: C.muted, fontSize: '0.75rem', margin: 0 }}>{sub}</p>}
+    </div>
+  </div>
 );
-
-const colorOf = (key) => ({
-  danger: C.danger, warning: C.warning, success: C.success, accent: C.accent
-}[key] ?? C.accent);
 
 // ─────────────────────────────────────────────────────────────────────────
 //  MAIN APP
 // ─────────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [portfolios, setPortfolios]         = useState([]);
-  const [selected, setSelected]             = useState('');
-  const [activeTab, setActiveTab]           = useState('overview');
-  const [inference, setInference]           = useState(null);
-  const [analytics, setAnalytics]           = useState(null);
-  const [modelStatus, setModelStatus]       = useState(null);
+  const [view, setView]                     = useState('user'); // 'user' | 'tech'
+  const [groupedTickers, setGroupedTickers] = useState({});
+  const [leadTickers, setLeadTickers]       = useState({});
+  const [validDates, setValidDates]         = useState([]);
+  
+  // Selection state
+  const [selectedTickers, setSelectedTickers] = useState([]);
+  const [quantities, setQuantities]           = useState({});
+  const [targetDate, setTargetDate]           = useState('');
+  
+  // Analysis Data
+  const [analysis, setAnalysis]             = useState(null);
+  const [metrics, setMetrics]               = useState(null);
+  const [arima, setArima]                   = useState(null);
+  
+  // UI State
   const [loading, setLoading]               = useState(false);
   const [lastUpdated, setLastUpdated]       = useState(null);
+  const [showDetailedXAI, setShowDetailedXAI] = useState(false);
 
-  // Fetch portfolio list once
+  // Fetch initial data
   useEffect(() => {
-    axios.get(`${API_BASE}/portfolios`)
+    setLoading(true);
+    axios.get(`${API_BASE}/api/tickers`)
       .then(r => {
-        setPortfolios(r.data.portfolios);
-        if (r.data.portfolios.length) setSelected(r.data.portfolios[0]);
-      }).catch(console.error);
+        setGroupedTickers(r.data.grouped);
+        setLeadTickers(r.data.lead_tickers);
+        setValidDates(r.data.valid_dates);
+        if (r.data.valid_dates.length) setTargetDate(r.data.valid_dates[r.data.valid_dates.length - 1]);
+      })
+      .catch(console.error);
 
-    axios.get(`${API_BASE}/model-status`)
-      .then(r => setModelStatus(r.data)).catch(console.error);
+    axios.get(`${API_BASE}/api/metrics`)
+      .then(r => setMetrics(r.data))
+      .catch(console.error);
+      
+    setLoading(false);
   }, []);
 
-  // Fetch on portfolio change
-  const fetchAll = useCallback(async () => {
-    if (!selected) return;
+  const handleToggleTicker = (ticker) => {
+    if (selectedTickers.includes(ticker)) {
+      setSelectedTickers(selectedTickers.filter(t => t !== ticker));
+      const newQtys = { ...quantities };
+      delete newQtys[ticker];
+      setQuantities(newQtys);
+    } else {
+      setSelectedTickers([...selectedTickers, ticker]);
+      setQuantities({ ...quantities, [ticker]: 10 });
+    }
+  };
+
+  const handleRunAnalysis = async () => {
+    if (selectedTickers.length === 0) return;
     setLoading(true);
     try {
-      const [infRes, anaRes] = await Promise.all([
-        axios.get(`${API_BASE}/suggestions/${selected}`),
-        axios.get(`${API_BASE}/analytics/${selected}`),
-      ]);
-      setInference(infRes.data);
-      setAnalytics(anaRes.data);
+      const resp = await axios.post(`${API_BASE}/api/analyze`, {
+        tickers: selectedTickers,
+        quantities: selectedTickers.map(t => quantities[t] || 0),
+        date: targetDate
+      });
+      setAnalysis(resp.data);
+      
+      // Also fetch arima for the mapped archetype's lead ticker
+      const arimaResp = await axios.get(`${API_BASE}/api/arima/${resp.data.mapped_archetype}`);
+      setArima(arimaResp.data);
+      
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (err) {
       console.error(err);
     }
     setLoading(false);
-  }, [selected]);
+  };
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
-
-  // ── Derived values ──────────────────────────────────────────────────────
-  const shock     = inference?.shock         ?? {};
-  const recovery  = inference?.recovery      ?? {};
-  const risk      = inference?.risk_score    ?? {};
-  const domSens   = inference?.domain_sensitivity ?? {};
-  const portCat   = inference?.portfolio_category ?? {};
-  const buysell   = inference?.buysell       ?? {};
-  const stocks    = inference?.stock_table   ?? [];
-  const chart     = inference?.market_chart  ?? analytics?.market_data ?? [];
-
-  const shockProb   = shock.probability ?? 0;
-  const shockSignal = shock.signal ?? 'NORMAL';
-  const actionColor = colorOf(buysell.color ?? 'accent');
-  const riskColor   = colorOf(risk.risk_color ?? 'success');
-
-  // Domain sensitivity radar data
-  const radarData = domSens.ranked_domains?.map(d => ({
-    domain: d.domain.slice(0, 3).toUpperCase(),
-    value:  Math.abs(d.coefficient) * 1000,
-    full:   d.domain,
-  })) ?? [];
-
-  // Domain sentiment bars
-  const sentBars = domSens.recent_sentiment
-    ? Object.entries(domSens.recent_sentiment).map(([d, v]) => ({
-        name: d.charAt(0).toUpperCase() + d.slice(1, 4) + '.',
-        value: v,
-        fill: v >= 0 ? C.success : C.danger,
-      }))
-    : [];
-
-  // Tabs
-  const tabs = [
-    { id: 'overview',     label: 'Overview' },
-    { id: 'sensitivity',  label: 'Domain Sensitivity' },
-    { id: 'portfolio',    label: 'Portfolio Profile' },
-    { id: 'advisory',     label: 'AI Advisory' },
-    { id: 'stocks',       label: 'Stock Table' },
-  ];
+  // Helper for status colours
+  const colorOf = (key) => ({
+    danger: C.danger, warning: C.warning, success: C.success, accent: C.accent
+  }[key] ?? C.accent);
 
   return (
     <div style={{ display: 'flex', minHeight: '100vh', background: C.bg, color: C.text,
       fontFamily: "'Inter', sans-serif" }}>
 
-      {/* ── Sidebar ── */}
+      {/* ── Sidebar Nav ── */}
       <aside style={{
-        width: 220, background: C.surface, borderRight: `1px solid ${C.border}`,
+        width: 260, background: C.surface, borderRight: `1px solid ${C.border}`,
         padding: '2rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '2rem',
-        position: 'sticky', top: 0, height: '100vh', overflowY: 'auto',
+        position: 'sticky', top: 0, height: '100vh', zIndex: 100,
       }}>
-        {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <ShieldCheck size={24} color={C.accent} />
-          <span style={{ fontWeight: 800, fontSize: '1rem', letterSpacing: '0.08em',
-            color: C.accent }}>NEURAL RISK</span>
+          <ShieldCheck size={28} color={C.accent} />
+          <span style={{ fontWeight: 800, fontSize: '1.2rem', color: C.text }}>ANTIGRAVITY</span>
         </div>
 
-        {/* Portfolio picker */}
-        <div>
-          <Label style={{ marginBottom: 8 }}>Active Portfolio</Label>
-          <select
-            value={selected}
-            onChange={e => setSelected(e.target.value)}
+        <nav style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <button 
+            onClick={() => setView('user')}
             style={{
-              width: '100%', background: C.card, border: `1px solid ${C.border}`,
-              color: C.text, borderRadius: 8, padding: '0.5rem 0.75rem',
-              fontSize: '0.85rem', outline: 'none',
+              background: view === 'user' ? `${C.accent}15` : 'transparent',
+              border: `1px solid ${view === 'user' ? C.accent : 'transparent'}`,
+              color: view === 'user' ? C.accent : C.muted,
+              borderRadius: 12, padding: '0.8rem 1rem', display: 'flex', alignItems: 'center', gap: 12,
+              fontWeight: 600, cursor: 'pointer', transition: '0.2s'
             }}
           >
-            {portfolios.map(p => <option key={p} value={p}>{p.toUpperCase()}</option>)}
-          </select>
-        </div>
-
-        {/* Nav */}
-        <nav style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {tabs.map(t => (
-            <button
-              key={t.id}
-              onClick={() => setActiveTab(t.id)}
-              style={{
-                background: activeTab === t.id ? `${C.accent}18` : 'transparent',
-                border: `1px solid ${activeTab === t.id ? C.accent : 'transparent'}`,
-                color: activeTab === t.id ? C.accent : C.muted,
-                borderRadius: 8, padding: '0.55rem 0.85rem',
-                textAlign: 'left', fontSize: '0.82rem', fontWeight: 600,
-                cursor: 'pointer', transition: 'all 0.15s',
-              }}
-            >
-              {t.label}
-            </button>
-          ))}
+            <LayoutDashboard size={18} /> User Mode
+          </button>
+          <button 
+            onClick={() => setView('tech')}
+            style={{
+              background: view === 'tech' ? `${C.accent}15` : 'transparent',
+              border: `1px solid ${view === 'tech' ? C.accent : 'transparent'}`,
+              color: view === 'tech' ? C.accent : C.muted,
+              borderRadius: 12, padding: '0.8rem 1rem', display: 'flex', alignItems: 'center', gap: 12,
+              fontWeight: 600, cursor: 'pointer', transition: '0.2s'
+            }}
+          >
+            <Settings size={18} /> Technical Mode
+          </button>
         </nav>
 
-        {/* System status */}
-        <div style={{ marginTop: 'auto', fontSize: '0.73rem', color: C.muted }}>
-          <div style={{ marginBottom: 4 }}>
-            <SignalDot color={modelStatus?.all_ready ? C.success : C.warning} />
-            {modelStatus?.all_ready ? 'All 6 models ready' : 'Some models missing'}
-          </div>
-          {lastUpdated && <div>Updated: {lastUpdated}</div>}
+        <div style={{ marginTop: 'auto' }}>
+          <Card style={{ padding: '0.75rem', borderRadius: 12, background: `${C.surface}88` }}>
+             <Label>System Health</Label>
+             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: C.success }}>
+               <CheckCircle2 size={12} /> ML Pipeline Ready
+             </div>
+          </Card>
         </div>
       </aside>
 
-      {/* ── Main ── */}
-      <main style={{ flex: 1, padding: '2rem', overflowY: 'auto', maxWidth: 1200 }}>
-
-        {/* Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between',
-          alignItems: 'flex-start', marginBottom: '2rem' }}>
+      {/* ── Main Content Area ── */}
+      <main style={{ flex: 1, padding: '2.5rem', overflowY: 'auto', background: `radial-gradient(circle at top right, ${C.accent}05, transparent)` }}>
+        
+        {/* Header Section */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '2.5rem' }}>
           <div>
-            <h1 style={{ fontSize: '1.75rem', fontWeight: 800, textTransform: 'capitalize',
-              marginBottom: 4 }}>
-              {selected} Portfolio
+            <Badge label={view === 'user' ? "Portfolio Engineering" : "Quantitative Research"} color={C.accent} style={{ marginBottom: 8 }} />
+            <h1 style={{ fontSize: '2.2rem', fontWeight: 900, margin: 0, letterSpacing: '-0.02em' }}>
+              {view === 'user' ? "Risk Analysis & Forecasting" : "Model Governance Matrix"}
             </h1>
-            <p style={{ color: C.muted, fontSize: '0.85rem' }}>
-              Multi-domain sentiment risk analytics · 1,329 trading days · 6 ML models
+            <p style={{ color: C.muted, fontSize: '0.95rem', marginTop: 4 }}>
+              Integrated ML suite (M1–M6) tracking 27 global tickers and 3 news sentiment domains.
             </p>
           </div>
-          <button
-            onClick={fetchAll}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 6,
-              background: 'transparent', border: `1px solid ${C.border}`,
-              color: C.text, borderRadius: 8, padding: '0.5rem 1rem',
-              cursor: 'pointer', fontSize: '0.82rem',
-            }}
-          >
-            <RefreshCw size={14} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
-            Refresh
-          </button>
+          {lastUpdated && <div style={{ fontSize: '0.8rem', color: C.muted }}>Last Scored: {lastUpdated}</div>}
         </div>
 
-        {loading && (
-          <div style={{ textAlign: 'center', padding: '4rem', color: C.muted }}>
-            Running ML inference pipeline…
-          </div>
-        )}
-
-        {!loading && inference && (
-          <>
-            {/* ══ OVERVIEW TAB ══════════════════════════════════════════ */}
-            {activeTab === 'overview' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '1rem' }}>
-
-                {/* KPI row */}
-                {[
-                  {
-                    label: 'Shock Probability (M1)',
-                    value: `${(shockProb * 100).toFixed(1)}%`,
-                    sub: shockSignal,
-                    color: colorOf(shock.signal === 'HIGH' ? 'danger'
-                           : shock.signal === 'ELEVATED' ? 'warning' : 'success'),
-                    icon: <AlertTriangle size={18} />,
-                    col: 4,
-                  },
-                  {
-                    label: 'Next-Day Vol Risk (M3)',
-                    value: risk.risk_label ?? '—',
-                    sub: risk.predicted_vol ? `Vol: ${(risk.predicted_vol * 100).toFixed(3)}%` : '',
-                    color: riskColor,
-                    icon: <Activity size={18} />,
-                    col: 4,
-                  },
-                  {
-                    label: 'Recovery Forecast (M2)',
-                    value: recovery.p50_days ? `${recovery.p50_days}d` : '—',
-                    sub: recovery.band_label ?? '',
-                    color: C.accent,
-                    icon: <TrendingUp size={18} />,
-                    col: 4,
-                  },
-                ].map(({ label, value, sub, color, icon, col }) => (
-                  <Card key={label} style={{ gridColumn: `span ${col}` }} glow={color}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <Label>{label}</Label>
-                      <span style={{ color }}>{icon}</span>
-                    </div>
-                    <BigNum color={color}>{value}</BigNum>
-                    <div style={{ color: C.muted, fontSize: '0.75rem', marginTop: 6 }}>{sub}</div>
-                  </Card>
-                ))}
-
-                {/* Buy/Sell signal */}
-                <Card style={{ gridColumn: 'span 4' }} glow={actionColor}>
-                  <Label>Recommended Action</Label>
-                  <BigNum color={actionColor} size="1.6rem">{buysell.action ?? '—'}</BigNum>
-                  <div style={{ color: C.muted, fontSize: '0.73rem', marginTop: 8 }}>
-                    Confidence: {buysell.confidence ?? '—'}
-                  </div>
-                </Card>
-
-                {/* Portfolio category */}
-                <Card style={{ gridColumn: 'span 4' }}>
-                  <Label>Portfolio Category (M6)</Label>
-                  <BigNum color={C.accent} size="1.1rem" style={{ marginTop: 8 }}>
-                    {portCat.label ?? '—'}
-                  </BigNum>
-                  <div style={{ color: C.muted, fontSize: '0.73rem', marginTop: 8 }}>
-                    Shock freq: {portCat.shock_frequency_pct ?? '—'}% of trading days
-                  </div>
-                </Card>
-
-                {/* News to watch */}
-                <Card style={{ gridColumn: 'span 4' }}>
-                  <Label>Primary News Signal (M4/M5)</Label>
-                  <BigNum color={C.warning} size="1.3rem">
-                    {domSens.news_to_watch ?? '—'}
-                  </BigNum>
-                  <div style={{ color: C.muted, fontSize: '0.73rem', marginTop: 8 }}>
-                    {domSens.granger_confirmed
-                      ? '✓ Granger-confirmed causal signal'
-                      : 'Dominant sensitivity domain'}
-                  </div>
-                </Card>
-
-                {/* Area chart: SPY / first ticker */}
-                <Card style={{ gridColumn: 'span 8' }}>
-                  <Label style={{ marginBottom: '1rem' }}>Price Trend (60d)</Label>
-                  <ResponsiveContainer width="100%" height={240}>
-                    <AreaChart data={chart}>
-                      <defs>
-                        <linearGradient id="gA" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%"  stopColor={C.accent}  stopOpacity={0.3} />
-                          <stop offset="95%" stopColor={C.accent}  stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
-                      <XAxis dataKey="date" hide />
-                      <YAxis stroke={C.muted} fontSize={10} width={50}
-                        tickFormatter={v => `$${parseFloat(v).toFixed(0)}`} />
-                      <Tooltip
-                        contentStyle={{ background: C.surface, border: `1px solid ${C.border}`,
-                          borderRadius: 8, fontSize: '0.8rem' }}
-                      />
-                      {/* Show first 2 tickers that exist in chart data */}
-                      {Object.keys(chart[0] ?? {})
-                        .filter(k => !['date'].includes(k) && !k.startsWith('sent_'))
-                        .slice(0, 2)
-                        .map((t, i) => (
-                          <Area key={t} type="monotone" dataKey={t}
-                            stroke={i === 0 ? C.accent : C.success}
-                            fill={i === 0 ? 'url(#gA)' : 'none'}
-                            fillOpacity={1} strokeWidth={2} dot={false} />
-                        ))
-                      }
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </Card>
-
-                {/* Sentiment trend */}
-                <Card style={{ gridColumn: 'span 4' }}>
-                  <Label style={{ marginBottom: '1rem' }}>7-Day Sentiment (3 Domains)</Label>
-                  <ResponsiveContainer width="100%" height={240}>
-                    <BarChart data={sentBars} layout="vertical">
-                      <XAxis type="number" hide domain={[-0.3, 0.3]} />
-                      <YAxis dataKey="name" type="category" stroke={C.muted}
-                        fontSize={10} width={36} />
-                      <Tooltip
-                        contentStyle={{ background: C.surface, border: `1px solid ${C.border}`,
-                          borderRadius: 8, fontSize: '0.8rem' }}
-                        formatter={v => v.toFixed(4)}
-                      />
-                      <ReferenceLine x={0} stroke={C.border} />
-                      <Bar dataKey="value" radius={[0, 4, 4, 0]}>
-                        {sentBars.map((entry, i) => (
-                          <rect key={i} fill={entry.fill} />
+        {/* ══ USER MODE ══════════════════════════════════════════════════ */}
+        {view === 'user' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '2rem' }}>
+            
+            {/* Left: Input Builder */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              <Card>
+                <SectionHeading icon={ListFilter} title="Select Holdings" sub="Choose assets per archetype" />
+                
+                <div style={{ maxHeight: '450px', overflowY: 'auto', paddingRight: 8 }}>
+                  {Object.entries(groupedTickers).map(([arch, tickers]) => (
+                    <div key={arch} style={{ marginBottom: '1.5rem' }}>
+                      <Label style={{ color: C.accent, marginBottom: 8 }}>{arch}</Label>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                        {tickers.map(t => (
+                          <div 
+                            key={t}
+                            onClick={() => handleToggleTicker(t)}
+                            style={{
+                              padding: '0.6rem', background: selectedTickers.includes(t) ? `${C.accent}22` : C.surface,
+                              borderRadius: 8, border: `1px solid ${selectedTickers.includes(t) ? C.accent : C.border}`,
+                              cursor: 'pointer', fontSize: '0.8rem', fontWeight: 700, textAlign: 'center', transition: '0.1s'
+                            }}
+                          >
+                            {t}
+                          </div>
                         ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </Card>
-              </div>
-            )}
-
-            {/* ══ DOMAIN SENSITIVITY TAB ═══════════════════════════════ */}
-            {activeTab === 'sensitivity' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '1rem' }}>
-                <Card style={{ gridColumn: 'span 7' }}>
-                  <Label style={{ marginBottom: '1.5rem' }}>M5 Sensitivity Coefficients</Label>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={domSens.ranked_domains?.map(d => ({
-                      domain: d.domain,
-                      coeff:  parseFloat((d.coefficient * 1000).toFixed(4)),
-                    })) ?? []}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
-                      <XAxis dataKey="domain" stroke={C.muted} fontSize={11} />
-                      <YAxis stroke={C.muted} fontSize={10}
-                        tickFormatter={v => `${v}e-3`} />
-                      <Tooltip
-                        contentStyle={{ background: C.surface, border: `1px solid ${C.border}`,
-                          borderRadius: 8, fontSize: '0.8rem' }}
-                        formatter={v => [`${v}×10⁻³`, 'Coefficient']}
-                      />
-                      <Bar dataKey="coeff" radius={[4, 4, 0, 0]}>
-                        {(domSens.ranked_domains ?? []).map((d, i) => (
-                          <rect key={i}
-                            fill={i === 0 ? C.accent : i === 1 ? C.warning : C.muted} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </Card>
-
-                <Card style={{ gridColumn: 'span 5' }}>
-                  <Label style={{ marginBottom: '1rem' }}>Domain Interpretation</Label>
-                  {domSens.ranked_domains?.map((d, i) => (
-                    <div key={d.domain} style={{
-                      padding: '0.75rem', marginBottom: '0.6rem',
-                      background: C.surface, borderRadius: 8,
-                      borderLeft: `3px solid ${i === 0 ? C.accent : i === 1 ? C.warning : C.muted}`,
-                    }}>
-                      <div style={{ fontWeight: 700, fontSize: '0.85rem',
-                        textTransform: 'capitalize' }}>{d.domain}</div>
-                      <div style={{ color: C.muted, fontSize: '0.73rem', marginTop: 3 }}>
-                        Coeff: {d.coefficient.toExponential(3)} ·
-                        7-day avg: {(domSens.recent_sentiment?.[d.domain] ?? 0).toFixed(4)}
                       </div>
                     </div>
                   ))}
-                  {domSens.granger_confirmed && (
-                    <div style={{ marginTop: '1rem', background: `${C.success}15`,
-                      border: `1px solid ${C.success}44`, borderRadius: 8,
-                      padding: '0.75rem', fontSize: '0.75rem', color: C.success }}>
-                      ✓ {domSens.granger_confirmed}
-                    </div>
-                  )}
-                </Card>
-
-                <Card style={{ gridColumn: 'span 12' }}>
-                  <Label style={{ marginBottom: '1rem' }}>Sentiment History (60d)</Label>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={chart}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
-                      <XAxis dataKey="date" hide />
-                      <YAxis stroke={C.muted} fontSize={10} />
-                      <Tooltip
-                        contentStyle={{ background: C.surface, border: `1px solid ${C.border}`,
-                          borderRadius: 8, fontSize: '0.8rem' }}
-                      />
-                      <Line dataKey="sent_geopolitical" stroke={C.danger}  dot={false} strokeWidth={2} name="Geo" />
-                      <Line dataKey="sent_financial"    stroke={C.accent}  dot={false} strokeWidth={2} name="Fin" />
-                      <Line dataKey="sent_technology"   stroke={C.success} dot={false} strokeWidth={2} name="Tech" />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </Card>
-              </div>
-            )}
-
-            {/* ══ PORTFOLIO PROFILE TAB ════════════════════════════════ */}
-            {activeTab === 'portfolio' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '1rem' }}>
-                {[
-                  { label: 'Category (M6)', value: portCat.label ?? '—', color: C.accent, col: 4 },
-                  { label: 'Shock Frequency', value: `${portCat.shock_frequency_pct ?? '—'}%`,
-                    color: C.warning, col: 3, sub: 'of trading days' },
-                  { label: 'Holdings Correlation', value: portCat.intra_correlation ?? '—',
-                    color: C.accent, col: 3, sub: '1 = move together' },
-                  { label: 'Safe-Haven Weight', value: `${portCat.safe_haven_pct ?? '—'}%`,
-                    color: C.success, col: 2, sub: 'GLD/TLT/VPU' },
-                ].map(({ label, value, color, col, sub }) => (
-                  <Card key={label} style={{ gridColumn: `span ${col}` }}>
-                    <Label>{label}</Label>
-                    <BigNum color={color} size="1.8rem">{value}</BigNum>
-                    {sub && <div style={{ color: C.muted, fontSize: '0.73rem', marginTop: 6 }}>{sub}</div>}
-                  </Card>
-                ))}
-
-                {/* Expansion suggestions */}
-                <Card style={{ gridColumn: 'span 6' }}>
-                  <Label style={{ marginBottom: '1rem' }}>Portfolio Expansion Suggestions</Label>
-                  {portCat.expansion?.length ? portCat.expansion.map(s => (
-                    <div key={s.ticker} style={{
-                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                      padding: '0.75rem', marginBottom: '0.5rem',
-                      background: C.surface, borderRadius: 8,
-                    }}>
-                      <div>
-                        <span style={{ fontWeight: 700, marginRight: 10,
-                          color: C.accent }}>{s.ticker}</span>
-                        <span style={{ color: C.muted, fontSize: '0.78rem' }}>{s.rationale}</span>
-                      </div>
-                      <Badge label="Add +" color={C.success} />
-                    </div>
-                  )) : (
-                    <div style={{ color: C.muted, fontSize: '0.82rem' }}>
-                      Portfolio is well-diversified. No additions recommended.
-                    </div>
-                  )}
-                </Card>
-
-                {/* Risk profile summary */}
-                <Card style={{ gridColumn: 'span 6' }}>
-                  <Label style={{ marginBottom: '1rem' }}>M3 Risk Band (Next Day)</Label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem' }}>
-                    <div style={{
-                      width: 20, height: 120, background: `linear-gradient(to bottom, ${C.danger}, ${C.warning}, ${C.success})`,
-                      borderRadius: 999, position: 'relative', flexShrink: 0,
-                    }}>
-                      {risk.predicted_vol != null && (
-                        <div style={{
-                          position: 'absolute', left: '100%', marginLeft: 8,
-                          top: `${Math.min(90, Math.max(5, (risk.predicted_vol / 0.04) * 90))}%`,
-                          width: 8, height: 2, background: 'white',
-                          whiteSpace: 'nowrap', fontSize: '0.72rem', color: C.text,
-                          paddingLeft: 4,
-                        }}>
-                          ← {(risk.predicted_vol * 100).toFixed(3)}%
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <div style={{ fontWeight: 800, fontSize: '1.2rem', color: riskColor }}>
-                        {risk.risk_label ?? '—'}
-                      </div>
-                      <div style={{ color: C.muted, fontSize: '0.75rem', marginTop: 6 }}>
-                        P25: {risk.p25_vol ? (risk.p25_vol * 100).toFixed(3) + '%' : '—'}<br />
-                        P75: {risk.p75_vol ? (risk.p75_vol * 100).toFixed(3) + '%' : '—'}
-                      </div>
-                    </div>
-                  </div>
-                </Card>
-              </div>
-            )}
-
-            {/* ══ AI ADVISORY TAB ══════════════════════════════════════ */}
-            {activeTab === 'advisory' && (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, 1fr)', gap: '1rem' }}>
-
-                {/* Main advisory card */}
-                <Card style={{ gridColumn: 'span 12', borderLeft: `4px solid ${actionColor}` }}
-                  glow={actionColor}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between',
-                    alignItems: 'flex-start' }}>
-                    <div>
-                      <Label>ML-Derived Recommendation</Label>
-                      <h2 style={{ fontSize: '2rem', fontWeight: 800, color: actionColor, marginTop: 8 }}>
-                        {buysell.action ?? '—'}
-                      </h2>
-                      <Badge label={`Confidence: ${buysell.confidence ?? '—'}`} color={actionColor} />
-                    </div>
-                    <Zap size={40} color={actionColor} />
-                  </div>
-                  <div style={{ marginTop: '1.5rem', lineHeight: 1.7,
-                    color: C.muted, fontSize: '0.9rem', maxWidth: 740 }}>
-                    {buysell.reasoning ?? '—'}
-                  </div>
-                </Card>
-
-                {/* Evidence cards */}
-                {[
-                  {
-                    label: 'M1 Evidence',
-                    body: shock.note ?? '—',
-                    icon: <AlertTriangle size={16} />,
-                    color: colorOf(shock.signal === 'HIGH' ? 'danger'
-                           : shock.signal === 'ELEVATED' ? 'warning' : 'success'),
-                    col: 4,
-                  },
-                  {
-                    label: 'M2 Evidence',
-                    body: recovery.band_label ?? '—',
-                    icon: <TrendingUp size={16} />,
-                    color: C.accent,
-                    col: 4,
-                  },
-                  {
-                    label: 'M4/M5 Evidence',
-                    body: domSens.granger_confirmed
-                      ?? `Dominant domain: ${domSens.dominant_domain ?? '—'}`,
-                    icon: <Globe size={16} />,
-                    color: C.warning,
-                    col: 4,
-                  },
-                ].map(({ label, body, icon, color, col }) => (
-                  <Card key={label} style={{ gridColumn: `span ${col}` }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
-                      <span style={{ color }}>{icon}</span>
-                      <Label>{label}</Label>
-                    </div>
-                    <div style={{ color: C.muted, fontSize: '0.82rem', lineHeight: 1.6 }}>
-                      {body}
-                    </div>
-                  </Card>
-                ))}
-
-                {/* Disclaimer */}
-                <div style={{ gridColumn: 'span 12', color: C.muted,
-                  fontSize: '0.72rem', textAlign: 'center', marginTop: '0.5rem' }}>
-                  ⚠ These are ML model inferences from historical data (2021–2026), not financial advice.
-                  Always do your own research before making investment decisions.
                 </div>
-              </div>
-            )}
-
-            {/* ══ STOCK TABLE TAB ══════════════════════════════════════ */}
-            {activeTab === 'stocks' && (
-              <Card>
-                <Label style={{ marginBottom: '1.25rem' }}>
-                  Per-Stock Performance — {selected.toUpperCase()} Portfolio
-                </Label>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-                  <thead>
-                    <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                      {['Ticker', 'Last Price', '7-Day Return', '5-Day Vol', 'Shock Today'].map(h => (
-                        <th key={h} style={{ padding: '0.6rem 1rem', textAlign: 'left',
-                          color: C.muted, fontWeight: 600, fontSize: '0.72rem',
-                          letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stocks.length ? stocks.map(s => (
-                      <tr key={s.ticker} style={{
-                        borderBottom: `1px solid ${C.border}`,
-                        background: s.shock_today ? `${C.danger}08` : 'transparent',
-                      }}>
-                        <td style={{ padding: '0.8rem 1rem', fontWeight: 700, color: C.accent }}>
-                          {s.ticker}
-                        </td>
-                        <td style={{ padding: '0.8rem 1rem' }}>${s.last_price}</td>
-                        <td style={{ padding: '0.8rem 1rem',
-                          color: s.return_7d >= 0 ? C.success : C.danger }}>
-                          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            {s.return_7d >= 0
-                              ? <ArrowUpRight size={13} />
-                              : <ArrowDownRight size={13} />}
-                            {s.return_7d}%
-                          </span>
-                        </td>
-                        <td style={{ padding: '0.8rem 1rem', color: C.muted }}>
-                          {(s.vol5 * 100).toFixed(3)}%
-                        </td>
-                        <td style={{ padding: '0.8rem 1rem' }}>
-                          {s.shock_today
-                            ? <Badge label="⚡ SHOCK" color={C.danger} />
-                            : <Badge label="Normal" color={C.success} />}
-                        </td>
-                      </tr>
-                    )) : (
-                      <tr>
-                        <td colSpan={5} style={{ padding: '2rem', textAlign: 'center',
-                          color: C.muted }}>
-                          No stock data available
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
               </Card>
-            )}
-          </>
-        )}
 
-        {!loading && !inference && (
-          <div style={{ textAlign: 'center', padding: '6rem', color: C.muted }}>
-            <AlertTriangle size={40} style={{ marginBottom: '1rem' }} />
-            <div>Could not load data. Is the backend running?</div>
-            <code style={{ fontSize: '0.8rem', display: 'block', marginTop: 8 }}>
-              python dashboard/main.py
-            </code>
+              <Card>
+                <SectionHeading icon={Settings} title="Execution Config" sub="Set quantities and target date" />
+                
+                {selectedTickers.length > 0 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    {selectedTickers.map(t => (
+                      <div key={t} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                         <span style={{ fontWeight: 700, fontSize: '0.85rem' }}>{t}</span>
+                         <input 
+                            type="number" 
+                            value={quantities[t] || 0}
+                            onChange={(e) => setQuantities({...quantities, [t]: parseInt(e.target.value) || 0})}
+                            style={{ width: 60, background: C.bg, border: `1px solid ${C.border}`, color: C.text, borderRadius: 4, padding: 4, textAlign: 'center' }}
+                         />
+                      </div>
+                    ))}
+                    
+                    <div style={{ borderTop: `1px solid ${C.border}`, pt: '1rem', marginTop: '1rem' }}>
+                      <Label>Analysis Target Date</Label>
+                      <select 
+                        value={targetDate} 
+                        onChange={e => setTargetDate(e.target.value)}
+                        style={{ width: '100%', padding: '0.6rem', background: C.card, border: `1px solid ${C.border}`, color: C.text, borderRadius: 8 }}
+                      >
+                         {validDates.slice().reverse().map(d => <option key={d} value={d}>{d}</option>)}
+                      </select>
+                    </div>
+
+                    <button 
+                      onClick={handleRunAnalysis}
+                      disabled={loading}
+                      style={{ 
+                        width: '100%', marginTop: '1rem', background: C.accent, color: C.bg, 
+                        border: 'none', borderRadius: 12, padding: '1rem', fontWeight: 800,
+                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+                      }}
+                    >
+                      {loading ? <RefreshCw size={18} className="spin" /> : <Zap size={18} />}
+                      Run ML Synthesis
+                    </button>
+                  </div>
+                ) : (
+                  <p style={{ color: C.muted, fontSize: '0.8rem', textAlign: 'center' }}>Select tickers above to start building.</p>
+                )}
+              </Card>
+            </div>
+
+            {/* Right: Analysis Dashboard */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              {!analysis && !loading && (
+                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted }}>
+                  <div style={{ textAlign: 'center' }}>
+                     <Target size={48} style={{ opacity: 0.2, marginBottom: '1rem' }} />
+                     <p>Prepare your holdings on the left to view neural risk forecasts.</p>
+                  </div>
+                </div>
+              )}
+
+              {loading && (
+                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                   <div style={{ textAlign: 'center' }}>
+                      <RefreshCw size={48} color={C.accent} className="spin" style={{ marginBottom: '1rem' }} />
+                      <p>Running multi-model inference pipeline...</p>
+                   </div>
+                </div>
+              )}
+
+              {analysis && !loading && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                    <Card glow={colorOf(analysis.m1.signal_color)}>
+                       <Label>Shock Signal (M1)</Label>
+                       <BigNum color={colorOf(analysis.m1.signal_color)}>{analysis.m1.signal}</BigNum>
+                       <div style={{ fontSize: '0.75rem', marginTop: 8 }}>
+                          Prob: {(analysis.m1.shock_probability * 100).toFixed(1)}%
+                       </div>
+                    </Card>
+                    <Card glow={analysis.action === 'REDUCE / HEDGE' ? C.danger : analysis.action === 'BUY / ADD' ? C.success : C.accent}>
+                       <Label>Advisory Engine</Label>
+                       <BigNum color={analysis.action === 'REDUCE / HEDGE' ? C.danger : analysis.action === 'BUY / ADD' ? C.success : C.accent} size="1.4rem">
+                         {analysis.action}
+                       </BigNum>
+                       <div style={{ fontSize: '0.75rem', marginTop: 12 }}>
+                          Confidence: {analysis.confidence}
+                       </div>
+                    </Card>
+                    <Card>
+                       <Label>Mapped Archetype</Label>
+                       <BigNum size="1.4rem" style={{ textTransform: 'capitalize' }}>{analysis.mapped_archetype}</BigNum>
+                       <div style={{ fontSize: '0.75rem', marginTop: 12 }}>
+                          Risk Profile: {metrics?.ml_models.M6.assignments[analysis.mapped_archetype] || 'Standard'}
+                       </div>
+                    </Card>
+                  </div>
+
+                  <Card style={{ borderLeft: `6px solid ${C.accent}`, background: `${C.card}ee` }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                      <SectionHeading icon={Activity} title="AI Justification" sub="Machine learning synthesis of current conditions" />
+                      <button 
+                        onClick={() => setShowDetailedXAI(!showDetailedXAI)}
+                        style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.accent, borderRadius: 8, padding: '4px 12px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        {showDetailedXAI ? "Show Summary" : "View Detailed XAI"}
+                      </button>
+                    </div>
+
+                    <p style={{ lineHeight: 1.7, fontSize: '1rem', color: C.text }}>
+                      {showDetailedXAI ? analysis.justification.detailed : analysis.justification.short}
+                    </p>
+
+                    {showDetailedXAI && (
+                      <div style={{ marginTop: '2rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                         <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: '1rem', background: `${C.bg}44` }}>
+                            <Label style={{ color: C.accent }}>Recovery Justification (M2)</Label>
+                            <p style={{ fontSize: '0.8rem', color: C.muted, margin: '8px 0' }}>{analysis.recovery.justification}</p>
+                            <Badge label={analysis.recovery.band_label} color={C.accent} />
+                         </div>
+                         <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: '1rem', background: `${C.bg}44` }}>
+                            <Label style={{ color: C.warning }}>Domain Sensitivity (M5)</Label>
+                            <p style={{ fontSize: '0.8rem', color: C.muted, margin: '8px 0' }}>{analysis.m4_m5.note}</p>
+                            <div style={{ display: 'flex', gap: 12 }}>
+                               {analysis.m4_m5.ranked_domains.slice(0, 2).map(d => (
+                                 <Badge key={d.domain} label={`${d.domain}: ${d.coefficient.toFixed(4)}`} color={C.warning} />
+                               ))}
+                            </div>
+                         </div>
+                      </div>
+                    )}
+                  </Card>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '1rem' }}>
+                     <Card>
+                       <Label style={{ marginBottom: '1rem' }}>Relative Performance Trend (Last 60d)</Label>
+                       <ResponsiveContainer width="100%" height={260}>
+                         <AreaChart data={analysis.ticker_chart_data}>
+                            <defs>
+                              <linearGradient id="gUser" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor={C.accent} stopOpacity={0.2} />
+                                <stop offset="95%" stopColor={C.accent} stopOpacity={0} />
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke={C.border} vertical={false} />
+                            <XAxis dataKey="date" hide />
+                            <YAxis stroke={C.muted} fontSize={10} domain={['auto', 'auto']} tickFormatter={v => `$${v}`} />
+                            <Tooltip contentStyle={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 8 }} />
+                            {selectedTickers.slice(0, 4).map((t, i) => (
+                              <Area key={t} type="monotone" dataKey={t} stroke={[C.accent, C.success, C.warning, C.danger][i]} fill={`url(#gUser)`} strokeWidth={2} dot={false} />
+                            ))}
+                         </AreaChart>
+                       </ResponsiveContainer>
+                     </Card>
+
+                     <Card>
+                        <Label style={{ marginBottom: '1rem' }}>Holdings Risk Breakdown</Label>
+                        <div style={{ overflowY: 'auto', maxHeight: '260px' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                            <thead>
+                              <tr style={{ borderBottom: `1px solid ${C.border}`, textAlign: 'left' }}>
+                                <th style={{ padding: '8px', color: C.muted }}>Ticker</th>
+                                <th style={{ padding: '8px', color: C.muted }}>Price</th>
+                                <th style={{ padding: '8px', color: C.muted }}>Hedge</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {analysis.stock_table.map(s => (
+                                <tr key={s.ticker} style={{ borderBottom: `1px solid ${C.border}44` }}>
+                                  <td style={{ padding: '10px 8px', fontWeight: 700 }}>{s.ticker}</td>
+                                  <td style={{ padding: '10px 8px' }}>${s.last_price}</td>
+                                  <td style={{ padding: '10px 8px' }}>
+                                    {s.shock_today ? <Badge label="⚠" color={C.danger} /> : <Badge label="OK" color={C.success} />}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                     </Card>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
         )}
+
+        {/* ══ TECHNICAL MODE ═════════════════════════════════════════════ */}
+        {view === 'tech' && metrics && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+            
+            {/* Model Summary & KPI Strip */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+               <Card>
+                 <Label>Shock Pipeline (M1)</Label>
+                 <BigNum size="1.4rem">AUC: {metrics.ml_models.M1.auc_roc.toFixed(3)}</BigNum>
+                 <p style={{ fontSize: '0.7rem', color: C.muted, mt: 4 }}>Precision-tuned (F1: {metrics.ml_models.M1.f1_calibrated})</p>
+               </Card>
+               <Card>
+                 <Label>Recovery MAE (M2)</Label>
+                 <BigNum size="1.4rem">{metrics.ml_models.M2.mae_days} Days</BigNum>
+                 <p style={{ fontSize: '0.7rem', color: C.muted, mt: 4 }}>Error margin per shock event</p>
+               </Card>
+               <Card>
+                 <Label>Tech Sensitivity (M5)</Label>
+                 <BigNum size="1.4rem">{metrics.hypotheses.H3_portfolio_comparison.tech_sensitivity.toFixed(2)}</BigNum>
+                 <p style={{ fontSize: '0.7rem', color: C.muted, mt: 4 }}>Coefficient magnitude (Normalized)</p>
+               </Card>
+               <Card>
+                 <Label>Cluster Profile (M6)</Label>
+                 <BigNum size="1.4rem">S={metrics.ml_models.M6.silhouette.toFixed(3)}</BigNum>
+                 <p style={{ fontSize: '0.7rem', color: C.muted, mt: 4 }}>Silhouette Separability Score</p>
+               </Card>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: '1.5rem' }}>
+               {/* Metrics Deep-Dive */}
+               <Card>
+                  <SectionHeading icon={BarChart3} title="Statistical Significance" sub="Comparison against Null Hypotheses" />
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                     <thead>
+                        <tr style={{ borderBottom: `1px solid ${C.border}`, textAlign: 'left' }}>
+                           <th style={{ padding: '12px', color: C.muted }}>Validation Test</th>
+                           <th style={{ padding: '12px', color: C.muted }}>P-Value</th>
+                           <th style={{ padding: '12px', color: C.muted }}>Outcome</th>
+                        </tr>
+                     </thead>
+                     <tbody>
+                        {Object.entries(metrics.statistical_tests).map(([key, t]) => (
+                          <tr key={key} style={{ borderBottom: `1px solid ${C.border}44` }}>
+                            <td style={{ padding: '16px 12px' }}>
+                               <div style={{ fontWeight: 700 }}>{t.description}</div>
+                               <div style={{ fontSize: '0.7rem', color: C.muted }}>{t.note}</div>
+                            </td>
+                            <td style={{ padding: '16px 12px', fontFamily: 'monospace', color: t.significant ? C.success : C.warning }}>
+                               {t.p_value.toFixed(4)}
+                            </td>
+                            <td style={{ padding: '16px 12px' }}>
+                               {t.significant ? <Badge label="SIG" color={C.success} /> : <Badge label="INSIG" color={C.warning} />}
+                            </td>
+                          </tr>
+                        ))}
+                     </tbody>
+                  </table>
+               </Card>
+
+               {/* ARIMA Forecast */}
+               <Card>
+                  <SectionHeading icon={TrendingUp} title="Neural Forecasting (ARIMAX)" sub={`Predictive signal for ${arima?.ticker || 'archetype lead'}`} />
+                  {arima?.available ? (
+                    <div>
+                      <div style={{ height: 180, display: 'flex', alignItems: 'center', justifyContent: 'center', background: `${C.bg}66`, borderRadius: 12, border: `1px solid ${C.border}`, mb: '1rem' }}>
+                         {arima.plot_available ? (
+                           <div style={{ textAlign: 'center' }}>
+                              <p style={{ fontSize: '0.8rem', color: C.accent }}>Live forecast chart available in reports directory.</p>
+                              <p style={{ color: C.muted, fontSize: '0.7rem' }}>`arimax_{arima.ticker}_lag1_z.png`</p>
+                           </div>
+                         ) : (
+                           <div style={{ textAlign: 'center', color: C.muted }}>Executing forecast calculations...</div>
+                         )}
+                      </div>
+                      <Label>Model Inference</Label>
+                      <p style={{ fontSize: '0.82rem', lineHeight: 1.6, color: C.text, margin: '8px 0' }}>{arima.note}</p>
+                      <div style={{ background: `${C.accent}11`, p: '0.75rem', borderRadius: 8, mt: '1rem', padding: 8 }}>
+                         <div style={{ fontSize: '0.75rem', fontWeight: 700, color: C.accent }}>EXOGENOUS SIGNAL: FinBERT sentiment</div>
+                         <div style={{ fontSize: '0.65rem', color: C.muted }}>Lag: 1 Day · Model: ARIMA(1, 1, 1)</div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '2rem', color: C.muted }}>
+                       Select a portfolio archetype in User Mode to prime the lead ticker forecast.
+                    </div>
+                  )}
+               </Card>
+            </div>
+
+            <Card>
+              <SectionHeading icon={Database} title="Integrations & Data Feeds" sub="Endpoints for Power BI and external dashboards" />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+                 {[
+                   { label: "Master Data Feed", url: "/api/data-feed/master", icon: <Database /> },
+                   { label: "Hypothesis Funnel", url: "/api/data-feed/hypothesis-results", icon: <FlaskConical /> },
+                   { label: "Model Governance", url: "/api/data-feed/model-metrics", icon: <BarChart3 /> }
+                 ].map(feed => (
+                   <div key={feed.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: C.surface, p: '1rem', borderRadius: 12, border: `1px solid ${C.border}`, padding: '1rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                         <span style={{ color: C.accent }}>{feed.icon}</span>
+                         <span style={{ fontSize: '0.85rem', fontWeight: 700 }}>{feed.label}</span>
+                      </div>
+                      <a href={`${API_BASE}${feed.url}`} download style={{ textDecoration: 'none', color: C.accent, fontSize: '0.75rem', fontWeight: 800 }}>GET CSV</a>
+                   </div>
+                 ))}
+              </div>
+            </Card>
+
+            <Card style={{ textAlign: 'center', border: `1px dashed ${C.border}`, background: 'transparent' }}>
+               <Label>External Visualization</Label>
+               <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.muted }}>
+                  <div style={{ textAlign: 'center' }}>
+                     <Globe size={32} style={{ marginBottom: 12, opacity: 0.3 }} />
+                     <p>Power BI Public Web Embedding Placeholder</p>
+                     <p style={{ fontSize: '0.75rem' }}>Paste your <code>&lt;iframe&gt;</code> code from Power BI Service here to link interactive dashboards.</p>
+                  </div>
+               </div>
+            </Card>
+          </div>
+        )}
+
       </main>
 
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: ${C.bg}; }
+        .spin { animation: spin 1s linear infinite; }
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        select option { background: ${C.surface}; }
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: ${C.bg}; }
         ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 3px; }
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800;900&display=swap');
       `}</style>
     </div>
   );
