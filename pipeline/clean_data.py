@@ -54,9 +54,9 @@ RAW_NEWS_DIR  = ROOT_DIR / "data" / "raw" / "news"
 RAW_DIR       = ROOT_DIR / "data" / "raw" / "tickers"
 PROCESSED_DIR = ROOT_DIR / "data" / "processed"
 
-FINANCIAL_SCORED = RAW_NEWS_DIR / "financial_news_scored.csv"
-GEO_SCORED       = RAW_NEWS_DIR / "geo_news_scored.csv"
-TECH_SCORED      = RAW_NEWS_DIR / "tech_news_scored.csv"
+FINANCIAL_SCORED = RAW_NEWS_DIR / "financial_news_v3_scored.csv"
+GEO_SCORED       = RAW_NEWS_DIR / "geo_news_scored_v3.csv"
+TECH_SCORED      = RAW_NEWS_DIR / "tech_news_scored_v3.csv"
 PRICES_CSV       = RAW_DIR / "prices_daily.csv"
 
 # Standard columns expected from every scored CSV
@@ -83,9 +83,9 @@ def load_scored_news() -> pd.DataFrame:
     log.info("── [1/6] Loading scored news files ─────────────────")
 
     sources = [
-        (FINANCIAL_SCORED, "financial"),   # force domain — file stores as 'financial'
-        (GEO_SCORED,       None),          # keep 'geopolitical' as-is
-        (TECH_SCORED,      None),          # keep 'technology' as-is
+        (FINANCIAL_SCORED, "financial"),   
+        (GEO_SCORED,       "geopolitical"),
+        (TECH_SCORED,      "technology"),
     ]
 
     frames = []
@@ -94,8 +94,19 @@ def load_scored_news() -> pd.DataFrame:
             log.warning("  MISSING: %s — skipping.", path.name)
             continue
 
+        # Load with mangle_dupe_cols to handle duplicate 'tone_score'
         df = pd.read_csv(path)
         log.info("  Loaded %-35s  %d rows", path.name, len(df))
+
+        # ── Handle column differences ───────────────────────────────────
+        # Financial v3 uses 'sentiment_score' / 'sentiment_label'
+        if "sentiment_score" in df.columns and "tone_score" not in df.columns:
+            df = df.rename(columns={"sentiment_score": "tone_score", "sentiment_label": "tone_label"})
+
+        # Geo/Tech v3 may have duplicate 'tone_score' (Pandas might rename to 'tone_score.1')
+        # If both exist, use the one with data
+        if "tone_score.1" in df.columns:
+            df["tone_score"] = df["tone_score"].fillna(df["tone_score.1"])
 
         if forced_domain:
             df["domain"] = forced_domain
@@ -106,21 +117,19 @@ def load_scored_news() -> pd.DataFrame:
 
         for col in STANDARD_COLS:
             if col not in df.columns:
-                df[col] = None
+                df[col] = 0 if col.startswith("prob_") else None
 
         frames.append(df[STANDARD_COLS])
 
     if not frames:
-        raise FileNotFoundError(
-            "No scored news files found!\n"
-            "Run first:\n"
-            "  python pipeline/preprocess_finance.py\n"
-            "  python pipeline/score_geo.py\n"
-            "  python pipeline/score_tech.py"
-        )
+        raise FileNotFoundError("No scored news files found!")
 
     combined = pd.concat(frames, ignore_index=True)
     combined["date"] = pd.to_datetime(combined["date"], errors="coerce")
+    
+    # Ensure tone_score is numeric
+    combined["tone_score"] = pd.to_numeric(combined["tone_score"], errors="coerce")
+    
     combined = combined.dropna(subset=["date", "tone_score"])
 
     # ── 3. Deduplicate
@@ -308,13 +317,13 @@ def save_outputs(master_news: pd.DataFrame, master: pd.DataFrame):
 
     news_out = master_news.copy()
     news_out["date"] = news_out["date"].dt.strftime("%Y-%m-%d")
-    news_out.to_csv(PROCESSED_DIR / "master_news.csv", index=False)
-    log.info("  ✔  master_news.csv  (%d rows × %d cols)",
+    news_out.to_csv(PROCESSED_DIR / "master_news_v3.csv", index=False)
+    log.info("  ✔  master_news_v3.csv  (%d rows × %d cols)",
              len(news_out), len(news_out.columns))
 
     master_out = master.reset_index()
-    master_out.to_csv(PROCESSED_DIR / "master_data.csv", index=False)
-    log.info("  ✔  master_data.csv  (%d rows × %d cols)",
+    master_out.to_csv(PROCESSED_DIR / "master_data_v3.csv", index=False)
+    log.info("  ✔  master_data_v3.csv  (%d rows × %d cols)",
              len(master_out), len(master_out.columns))
 
 
