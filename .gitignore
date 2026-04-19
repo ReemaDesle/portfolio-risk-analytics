@@ -37,7 +37,7 @@ changedplan_scrape_news.txt
 challenges.txt
 
 # Scrapers & Checkpoints
-scrapers/checkpoints/financial_news_checkpoint.json
+scrapers/checkpoints/
 scrapers/clean_news_finance.py
 setup_guide.txt
 

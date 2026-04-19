@@ -39,8 +39,8 @@ import pandas as pd
 import yfinance as yf
 
 
-DEFAULT_START_DATE = "2026-03-20"   # inclusive
-DEFAULT_END_DATE   = "2026-04-15"   # inclusive (yfinance end is exclusive, handled below)
+DEFAULT_START_DATE = "2020-12-31"   # inclusive
+DEFAULT_END_DATE   = "2026-04-16"   # inclusive (yfinance end is exclusive, handled below)
 
 # ──────────────────────────────────────────────
 # ❷  TICKER UNIVERSE

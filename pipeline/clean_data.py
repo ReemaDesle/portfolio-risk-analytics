@@ -115,6 +115,38 @@ def load_scored_news() -> pd.DataFrame:
         if "clean_headline" in df.columns:
             df["headline"] = df["clean_headline"].fillna(df["headline"])
 
+        # ── Normalise column names across v3 schemas ──────────────────────
+        # financial_v3 : 'sentiment_score' / 'sentiment_label'  (no prob_*)
+        # geo/tech_v3  : 'tone_score' (NaN placeholder) + 'tone_score.1'
+        #                 real values in tone_score.1; prob_pos/neg/neu present
+
+        # 1. Rename sentiment_score → tone_score (financial v3)
+        if "sentiment_score" in df.columns and "tone_score" not in df.columns:
+            df.rename(columns={"sentiment_score": "tone_score"}, inplace=True)
+        if "sentiment_label" in df.columns and "tone_label" not in df.columns:
+            df.rename(columns={"sentiment_label": "tone_label"}, inplace=True)
+
+        # 2. geo/tech_v3: real scores live in 'tone_score.1'; drop the NaN column
+        if "tone_score.1" in df.columns:
+            df["tone_score"] = df["tone_score.1"].fillna(df.get("tone_score"))
+            df.drop(columns=["tone_score.1"], inplace=True)
+
+        # 3. Derive prob_* for files that don't have them (financial v3)
+        if "prob_pos" not in df.columns:
+            if "tone_label" in df.columns and "tone_score" in df.columns:
+                score = df["tone_score"].fillna(0.0)
+                lbl   = df["tone_label"].str.lower().fillna("neutral")
+                df["prob_pos"] = np.where(lbl == "positive", score,
+                                 np.where(lbl == "negative", 1 - score, 0.33))
+                df["prob_neg"] = np.where(lbl == "negative", score,
+                                 np.where(lbl == "positive", 1 - score, 0.33))
+                df["prob_neu"] = (1.0 - df["prob_pos"] - df["prob_neg"]).clip(0.0, 1.0)
+            else:
+                df["prob_pos"] = 0.33
+                df["prob_neg"] = 0.33
+                df["prob_neu"] = 0.34
+        # ─────────────────────────────────────────────────────────────────
+
         for col in STANDARD_COLS:
             if col not in df.columns:
                 df[col] = 0 if col.startswith("prob_") else None
