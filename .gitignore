@@ -35,9 +35,12 @@ Thumbs.db
 reports/*.pdf
 changedplan_scrape_news.txt
 challenges.txt
+reports/plots
+*scratch
 
 # Scrapers & Checkpoints
 scrapers/checkpoints/
 scrapers/clean_news_finance.py
 setup_guide.txt
+*figma-frontend
 
