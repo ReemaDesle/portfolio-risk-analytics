@@ -46,6 +46,9 @@ def run_arimax_forecast(sentiment_path=None, prices_path=None, target_ticker='SP
         merged = pd.merge(target_series, sentiment_df['sentiment_avg'], left_index=True, right_index=True, how='inner')
         merged.columns = ['returns', 'sentiment']
         
+        # Enforce business day frequency to silence statsmodels warnings
+        merged.index = pd.DatetimeIndex(merged.index).to_period('B').to_timestamp()
+        
         if len(merged) < 20:
             return {"error": "Insufficient data for ARIMA modeling"}
 
