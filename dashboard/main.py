@@ -1,4 +1,4 @@
-import sys, pathlib, io, json, re, requests
+import sys, pathlib, io, json, re
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import pandas as pd
@@ -78,53 +78,7 @@ def _read_text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _get_ai_reasoning(metrics: dict, action: str, mapped_archetype: str) -> str:
-    """Uses Groq API to generate human-readable advisory reasoning."""
-    if not GROQ_API_KEY:
-        return "AI reasoning unavailable (no API key)."
-    
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "model": "llama-3.1-70b-versatile",
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a Senior Risk Strategist at an institutional hedge fund. "
-                    "Your task is to provide a concise, high-impact reasoning for a portfolio advisory signal. "
-                    "Use the provided ML metrics to justify the action (BUY, HOLD, or REDUCE). "
-                    "Be professional, data-driven, and brief (max 3 sentences)."
-                )
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Portfolio Archetype: {mapped_archetype}\n"
-                    f"Recommended Action: {action}\n"
-                    f"ML Metrics Context: {json.dumps(metrics)}\n\n"
-                    "Provide the expert justification now."
-                )
-            }
-        ],
-        "temperature": 0.5,
-        "max_tokens": 150
-    }
-    
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=5)
-        if resp.status_code == 200:
-            return resp.json()["choices"][0]["message"]["content"].strip()
-        elif resp.status_code == 401:
-            return "AI Logic skipped (Invalid or expired GROQ_API_KEY in .env)"
-        else:
-            return f"AI Logic skipped (API Error {resp.status_code})"
-    except Exception:
-        return "AI Logic skipped (Inference timeout)"
+
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -255,14 +209,7 @@ def analyze_portfolio(req: AnalyzeRequest):
         "m6": result.get("m6"),
     }
     
-    # Generate dynamic AI reasoning via Groq
-    context = {
-        "shock_prob": response["m1"].get("shock_probability"),
-        "risk_level": response["m3"].get("risk_label"),
-        "sensitivity": response["m4_m5"].get("dominant_domain"),
-        "recovery": response["m2"].get("band_label")
-    }
-    response["justification"]["ai_expert"] = _get_ai_reasoning(context, response["action"], archetype)
+
 
     return _sanitize(response)
 
@@ -295,7 +242,17 @@ def get_metrics():
         "M3": {"name": "Risk", "val": _find(r"tech:.*?Ridge:.*?R2':\s*([-]?[\d.]+)", summary_content, 0.32), "unit": "R²"},
         "M4": {"name": "Causal", "val": 0.006, "unit": "p-val"},
         "M5": {"name": "Sens", "val": _find(r"tech:.*?r=([-]?[\d.]+)", eda_content, 0.40), "unit": "Corr"},
-        "M6": {"name": "Cluster", "val": _find(r"2:\s*([\d.]+)", summary_content, 0.25), "unit": "S-Score"},
+        "M6": {
+            "name": "Cluster", 
+            "val": _find(r"2:\s*([\d.]+)", summary_content, 0.25), 
+            "unit": "S-Score",
+            "assignments": {
+                "tech":         "Geopolitical-Sensitive",
+                "geopolitical": "Geopolitical-Sensitive",
+                "balanced":     "Market-Sensitive",
+                "conservative": "Yield-Sensitive",
+            }
+        },
     }
 
     # Radar data for visualization
