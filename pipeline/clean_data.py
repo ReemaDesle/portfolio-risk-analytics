@@ -349,13 +349,13 @@ def save_outputs(master_news: pd.DataFrame, master: pd.DataFrame):
 
     news_out = master_news.copy()
     news_out["date"] = news_out["date"].dt.strftime("%Y-%m-%d")
-    news_out.to_csv(PROCESSED_DIR / "master_news_v3.csv", index=False)
-    log.info("  ✔  master_news_v3.csv  (%d rows × %d cols)",
+    news_out.to_csv(PROCESSED_DIR / "master_news.csv", index=False)
+    log.info("  ✔  master_news.csv  (%d rows × %d cols)",
              len(news_out), len(news_out.columns))
 
     master_out = master.reset_index()
-    master_out.to_csv(PROCESSED_DIR / "master_data_v3.csv", index=False)
-    log.info("  ✔  master_data_v3.csv  (%d rows × %d cols)",
+    master_out.to_csv(PROCESSED_DIR / "master_data.csv", index=False)
+    log.info("  ✔  master_data.csv  (%d rows × %d cols)",
              len(master_out), len(master_out.columns))
 
 

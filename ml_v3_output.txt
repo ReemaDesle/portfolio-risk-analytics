@@ -1,0 +1,289 @@
+09:34:31  INFO      =================================================================
+09:34:31  INFO        ML MODELLING PIPELINE v2  |  Portfolio Risk Analytics
+09:34:31  INFO      =================================================================
+09:34:31  INFO        Loaded master_data: 1330 rows × 102 cols
+09:34:31  INFO      ── [FEATURE ENGINEERING v2] ─────────────────────────────
+09:34:31  INFO        Building portfolio-level return & vol aggregations...
+09:34:31  INFO        Computing per-portfolio vol z-scores (adaptive thresholds)...
+09:34:31  INFO        Adding cross-domain lag features (lag-1 to lag-7)...
+09:34:31  INFO        Computing article spike/zscore/availability flags...
+09:34:31  INFO        Deriving shock flags per portfolio (95th pct adaptive threshold)...
+09:34:31  INFO        Computing sentiment velocity (1-day delta)...
+09:34:31  INFO        Computing 3-day rolling smoothed sentiment...
+09:34:31  INFO        Computing intra-portfolio correlation (rolling 20d)...
+09:34:31  INFO        Z-score normalising sentiment/lag/velocity features...
+09:34:31  INFO        Feature engineering v2 complete. Shape: 1330 rows × 203 cols
+09:34:32  INFO        ML features saved → data/processed/ml_features.csv
+09:34:32  INFO      ── [M1] Shock Classifier (adaptive threshold + walk-forward CV) ──
+09:34:32  INFO        Shock events: 48 / 752 (6.4%)
+09:34:33  INFO        Walk-forward CV → F1@0.5: 0.1441 | F1@0.27(calibrated): 0.4187 | AUC-ROC: 0.8560 | AUC-PR: 0.3606
+09:34:33  INFO        Using RandomForest (shock_events=48 < 100)
+09:34:34  INFO        SHAP skipped for M1: No module named 'shap'
+09:34:34  INFO        ✔ M1 saved → models/ml/m1_shock_classifier.pkl
+09:34:34  INFO          Optimal threshold: 0.268 | Calibrated F1: 0.4187
+09:34:34  INFO      ── [M2] Recovery Predictor (pooled shocks, 3-day sustained recovery) ──
+09:34:34  INFO        M1 confidence gate active (threshold=0.75) for tech portfolio.
+09:34:34  INFO        geopolitical: 79 shock events (0 censored / no recovery found)
+09:34:34  INFO        tech: 35 shock events (0 censored / no recovery found)
+09:34:34  INFO        balanced: 87 shock events (0 censored / no recovery found)
+09:34:34  INFO        conservative: 57 shock events (0 censored / no recovery found)
+09:34:34  INFO        Pooled shock events: 258 (across 4 portfolios)
+09:34:35  INFO        M2 | Median MAE: 2.15 days | GBR MAE: 2.42 days | Avg band (P25-P75): 5.2 days | pooled: 258
+09:34:35  INFO        ✔ M2 saved → models/ml/m2_recovery_predictor.pkl
+09:34:35  INFO      ── [M3] Portfolio Risk Scorer (sentiment-only → next-day vol + risk band) ──
+09:34:36  INFO        geopolitical | Ridge R²=0.377 MAE=0.00209 | MLP R²=-1331.504 | Band width=0.00385 | Non-linear: False
+09:34:37  INFO        tech | Ridge R²=0.275 MAE=0.00305 | MLP R²=-985.170 | Band width=0.00570 | Non-linear: False
+09:34:39  INFO        balanced | Ridge R²=0.051 MAE=0.00129 | MLP R²=-6908.864 | Band width=0.00228 | Non-linear: False
+09:34:40  INFO        conservative | Ridge R²=0.393 MAE=0.00140 | MLP R²=-4255.957 | Band width=0.00244 | Non-linear: False
+09:34:40  INFO        ✔ M3 saved for all portfolios (with risk band P25/P75).
+09:34:40  INFO      ── [M4] Cross-Domain Lag (ADF → CCF → Granger, BIC, confounder) ──  
+09:34:41  INFO        Step 1: ADF stationarity tests (BIC autolag)...
+09:34:41  WARNING       'sentiment_score_financial' is constant (no variance) — skipping ADF
+09:34:41  INFO        ADF: 7/7 series already stationary
+09:34:41  INFO        Step 2: CCF for all domain–portfolio pairs (discover lags first)...
+09:34:41  INFO        Peak CCF lags:
+       cause       effect  lag  ccf_correlation
+geopolitical     balanced    0          -0.0824
+geopolitical         tech    3          -0.0748
+  technology geopolitical    5          -0.1058
+09:34:41  INFO        ✔ CCF results saved → models/ml/m4_ccf_results.csv
+09:34:41  INFO        Step 3: Granger causality tests (validate CCF findings)...        
+09:34:41  WARNING     Granger bivariate financial→tech failed: The x values include a column with constant values and so the test statistic cannot be computed.
+09:34:42  WARNING     Granger bivariate financial→balanced failed: The x values include a column with constant values and so the test statistic cannot be computed.
+09:34:42  INFO        Significant Granger causalities:
+       cause effect  lag  p_value  significant  controlled_for_fin
+geopolitical   tech    3   0.0062         True                True
+geopolitical   tech    4   0.0133         True                True
+geopolitical   tech    5   0.0232         True                True
+09:34:42  INFO        Step 4: Reduced-form VAR on portfolio-level averages (BIC)...     
+C:\portfolio-risk-analytics\venv\Lib\site-packages\statsmodels\tsa\base\tsa_model.py:473: ValueWarning: A date index has been provided, but it has no associated frequency information and so will be ignored when e.g. forecasting.
+  self._init_dates(dates, freq)
+09:34:42  WARNING     VAR fitting failed: 1-th leading minor of the array is not positive definite
+09:34:42  INFO        ✔ M4 saved → models/ml/m4_granger_results.csv + m4_ccf_results.csv
+09:34:42  INFO      ── [M5] Sentiment-Vol Regression (Ridge + SHAP, per-portfolio) ──   
+09:34:42  INFO        Domain sentiment cross-correlation:
+                              sentiment_score_financial  sentiment_score_geopolitical  sentiment_score_technology
+sentiment_score_financial                           NaN                           NaN                         NaN
+sentiment_score_geopolitical                        NaN                         1.000                      -0.011
+sentiment_score_technology                          NaN                        -0.011                       1.000
+09:34:42  INFO        geopolitical → R²=0.7321 | alpha=10.0000 | Top: lagged_vol_geopolitical (0.0038)
+09:34:42  INFO          SHAP skipped for M5/geopolitical: No module named 'shap'
+09:34:42  INFO        tech → R²=0.6090 | alpha=10.0000 | Top: lagged_vol_tech (0.0071)
+09:34:42  INFO          SHAP skipped for M5/tech: No module named 'shap'
+09:34:42  INFO        balanced → R²=0.5428 | alpha=10.0000 | Top: lagged_vol_balanced (0.0022)
+09:34:42  INFO          SHAP skipped for M5/balanced: No module named 'shap'
+09:34:42  INFO        conservative → R²=0.6622 | alpha=10.0000 | Top: lagged_vol_conservative (0.0023)
+09:34:42  INFO          SHAP skipped for M5/conservative: No module named 'shap'
+09:34:42  INFO        ✔ M5 Ridge coefficients → models/ml/m5_lasso_coefficients.csv     
+09:34:42  INFO        ✔ M5 domain coefficients → models/ml/m5_domain_coefficients.csv   
+09:34:42  INFO      ── [M6] Portfolio Clustering (M5-sensitivity + hierarchical) ──     
+09:34:43  INFO        Using M5 domain sensitivity coefficients as primary clustering features.
+09:34:45  INFO        Silhouette scores: {2: 0.2985865666185502, 3: 0.10938730876744299} | Best k=2
+09:34:45  INFO        Cluster assignments:
+                        kmeans_label      hierarchical_label
+portfolio
+geopolitical  Geopolitical-Sensitive  Geopolitical-Sensitive
+tech          Geopolitical-Sensitive  Geopolitical-Sensitive
+balanced      Geopolitical-Sensitive  Geopolitical-Sensitive
+conservative  Geopolitical-Sensitive  Geopolitical-Sensitive
+09:34:45  INFO        ✔ M6 saved → models/ml/m6_clusters.csv
+.0022)
+09:34:42  INFO          SHAP skipped for M5/balanced: No module named 'shap'
+09:34:42  INFO        conservative → R²=0.6622 | alpha=10.0000 | Top: lagged_vol_conservative (0.0023)
+09:34:42  INFO          SHAP skipped for M5/conservative: No module named 'shap'        
+09:34:42  INFO        ✔ M5 Ridge coefficients → models/ml/m5_lasso_coefficients.csv     
+09:34:42  INFO        ✔ M5 domain coefficients → models/ml/m5_domain_coefficients.csv   
+09:34:42  INFO      ── [M6] Portfolio Clustering (M5-sensitivity + hierarchical) ──     
+09:34:43  INFO        Using M5 domain sensitivity coefficients as primary clustering features.
+09:34:45  INFO        Silhouette scores: {2: 0.2985865666185502, 3: 0.10938730876744299} | Best k=2
+09:34:45  INFO        Cluster assignments:
+                        kmeans_label      hierarchical_label
+portfolio
+geopolitical  Geopolitical-Sensitive  Geopolitical-Sensitive
+tech          Geopolitical-Sensitive  Geopolitical-Sensitive
+balanced      Geopolitical-Sensitive  Geopolitical-Sensitive
+conservative  Geopolitical-Sensitive  Geopolitical-Sensitive
+09:34:45  INFO        ✔ M6 saved → models/ml/m6_clusters.csv
+ative (0.0023)
+09:34:42  INFO          SHAP skipped for M5/conservative: No module named 'shap'        
+09:34:42  INFO        ✔ M5 Ridge coefficients → models/ml/m5_lasso_coefficients.csv     
+09:34:42  INFO        ✔ M5 domain coefficients → models/ml/m5_domain_coefficients.csv   
+09:34:42  INFO      ── [M6] Portfolio Clustering (M5-sensitivity + hierarchical) ──     
+09:34:43  INFO        Using M5 domain sensitivity coefficients as primary clustering features.
+09:34:45  INFO        Silhouette scores: {2: 0.2985865666185502, 3: 0.10938730876744299} | Best k=2
+09:34:45  INFO        Cluster assignments:
+                        kmeans_label      hierarchical_label
+portfolio
+geopolitical  Geopolitical-Sensitive  Geopolitical-Sensitive
+tech          Geopolitical-Sensitive  Geopolitical-Sensitive
+balanced      Geopolitical-Sensitive  Geopolitical-Sensitive
+conservative  Geopolitical-Sensitive  Geopolitical-Sensitive
+09:34:45  INFO        ✔ M6 saved → models/ml/m6_clusters.csv
+09:34:42  INFO      ── [M6] Portfolio Clustering (M5-sensitivity + hierarchical) ──     
+09:34:43  INFO        Using M5 domain sensitivity coefficients as primary clustering features.
+09:34:45  INFO        Silhouette scores: {2: 0.2985865666185502, 3: 0.10938730876744299} | Best k=2
+09:34:45  INFO        Cluster assignments:
+                        kmeans_label      hierarchical_label
+portfolio
+geopolitical  Geopolitical-Sensitive  Geopolitical-Sensitive
+tech          Geopolitical-Sensitive  Geopolitical-Sensitive
+balanced      Geopolitical-Sensitive  Geopolitical-Sensitive
+conservative  Geopolitical-Sensitive  Geopolitical-Sensitive
+09:34:45  INFO        ✔ M6 saved → models/ml/m6_clusters.csv
+                        kmeans_label      hierarchical_label
+portfolio
+geopolitical  Geopolitical-Sensitive  Geopolitical-Sensitive
+tech          Geopolitical-Sensitive  Geopolitical-Sensitive
+balanced      Geopolitical-Sensitive  Geopolitical-Sensitive
+conservative  Geopolitical-Sensitive  Geopolitical-Sensitive
+09:34:45  INFO        ✔ M6 saved → models/ml/m6_clusters.csv
+tech          Geopolitical-Sensitive  Geopolitical-Sensitive
+balanced      Geopolitical-Sensitive  Geopolitical-Sensitive
+conservative  Geopolitical-Sensitive  Geopolitical-Sensitive
+09:34:45  INFO        ✔ M6 saved → models/ml/m6_clusters.csv
+09:34:45  INFO        ✔ M6 saved → models/ml/m6_clusters.csv
+09:34:45  INFO        ✔ Results summary → reports/ml_results_summary.txt
+09:34:45  INFO        ✔ Results summary → reports/ml_results_summary.txt
+09:34:45  INFO
+09:34:45  INFO      =================================================================   
+09:34:45  INFO
+09:34:45  INFO      =================================================================   
+09:34:45  INFO      =================================================================   
+09:34:45  INFO        ALL MODELS COMPLETE (v2)
+09:34:45  INFO        Models  → C:\portfolio-risk-analytics\models\ml
+09:34:45  INFO        Summary → C:\portfolio-risk-analytics\reports\ml_results_summary.txt
+09:34:45  INFO      =================================================================   
+
+(venv) C:\portfolio-risk-analytics>python pipeline/ml/train_models.py
+09:46:20  INFO      =================================================================
+09:46:20  INFO        ML MODELLING PIPELINE v2  |  Portfolio Risk Analytics
+09:46:20  INFO      =================================================================   
+09:46:20  INFO        Loaded master_data: 1330 rows × 102 cols
+09:46:20  INFO      ── [FEATURE ENGINEERING v2] ─────────────────────────────
+09:46:20  INFO        Building portfolio-level return & vol aggregations...
+09:46:20  INFO        Computing per-portfolio vol z-scores (adaptive thresholds)...
+09:46:20  INFO        Adding cross-domain lag features (lag-1 to lag-7)...
+09:46:21  INFO        Computing article spike/zscore/availability flags...
+09:46:21  INFO        Deriving shock flags per portfolio (95th pct adaptive threshold)...
+09:46:21  INFO        Computing sentiment velocity (1-day delta)...
+09:46:21  INFO        Computing 3-day rolling smoothed sentiment...
+09:46:21  INFO        Computing intra-portfolio correlation (rolling 20d)...
+09:46:21  INFO        Z-score normalising sentiment/lag/velocity features...
+09:46:21  INFO        Feature engineering v2 complete. Shape: 1330 rows × 203 cols
+09:46:21  INFO        ML features saved → data/processed/ml_features.csv
+09:46:21  INFO      ── [M1] Shock Classifier (adaptive threshold + walk-forward CV) ──
+09:46:22  INFO        Shock events: 48 / 752 (6.4%)
+09:46:23  INFO        Walk-forward CV → F1@0.5: 0.1441 | F1@0.27(calibrated): 0.4187 | AUC-ROC: 0.8560 | AUC-PR: 0.3606
+09:46:23  INFO        Using RandomForest (shock_events=48 < 100)
+09:46:24  INFO        SHAP skipped for M1: No module named 'shap'
+09:46:24  INFO        ✔ M1 saved → models/ml/m1_shock_classifier.pkl
+09:46:24  INFO          Optimal threshold: 0.268 | Calibrated F1: 0.4187
+09:46:24  INFO      ── [M2] Recovery Predictor (pooled shocks, 3-day sustained recovery) ──
+09:46:24  INFO        M1 confidence gate active (threshold=0.75) for tech portfolio.
+09:46:24  INFO        geopolitical: 79 shock events (0 censored / no recovery found)
+09:46:24  INFO        tech: 35 shock events (0 censored / no recovery found)
+09:46:24  INFO        balanced: 87 shock events (0 censored / no recovery found)
+09:46:25  INFO        conservative: 57 shock events (0 censored / no recovery found)
+09:46:25  INFO        Pooled shock events: 258 (across 4 portfolios)
+09:46:25  INFO        M2 | Median MAE: 2.15 days | GBR MAE: 2.42 days | Avg band (P25-P75): 5.2 days | pooled: 258
+09:46:25  INFO        ✔ M2 saved → models/ml/m2_recovery_predictor.pkl
+09:46:25  INFO      ── [M3] Portfolio Risk Scorer (sentiment-only → next-day vol + risk band) ──
+09:46:26  INFO        geopolitical | Ridge R²=0.377 MAE=0.00209 | MLP R²=-1331.504 | Band width=0.00385 | Non-linear: False
+09:46:28  INFO        tech | Ridge R²=0.275 MAE=0.00305 | MLP R²=-985.170 | Band width=0.00570 | Non-linear: False
+09:46:29  INFO        balanced | Ridge R²=0.051 MAE=0.00129 | MLP R²=-6908.864 | Band width=0.00228 | Non-linear: False
+09:46:30  INFO        conservative | Ridge R²=0.393 MAE=0.00140 | MLP R²=-4255.957 | Band width=0.00244 | Non-linear: False
+09:46:30  INFO        ✔ M3 saved for all portfolios (with risk band P25/P75).
+09:46:30  INFO      ── [M4] Cross-Domain Lag (ADF → CCF → Granger, BIC, confounder) ──  
+09:46:31  INFO        Step 1: ADF stationarity tests (BIC autolag)...
+09:46:31  WARNING       'sentiment_score_financial' is constant (no variance) — skipping ADF
+09:46:31  INFO        ADF: 7/7 series already stationary
+09:46:31  INFO        Step 2: CCF for all domain–portfolio pairs (discover lags first)...
+09:46:31  INFO        Peak CCF lags:
+       cause       effect  lag  ccf_correlation
+geopolitical     balanced    0          -0.0824
+geopolitical         tech    3          -0.0748
+  technology geopolitical    5          -0.1058
+09:46:31  INFO        ✔ CCF results saved → models/ml/m4_ccf_results.csv
+09:46:31  INFO        Step 3: Granger causality tests (validate CCF findings)...        
+09:46:31  WARNING     Granger bivariate financial→tech failed: The x values include a column with constant values and so the test statistic cannot be computed.
+09:46:31  WARNING     Granger bivariate financial→balanced failed: The x values include a column with constant values and so the test statistic cannot be computed.
+09:46:31  INFO        Significant Granger causalities:
+       cause effect  lag  p_value  significant  controlled_for_fin
+geopolitical   tech    3   0.0062         True                True
+geopolitical   tech    4   0.0133         True                True
+geopolitical   tech    5   0.0232         True                True
+09:46:31  INFO        Step 4: Reduced-form VAR on portfolio-level averages (BIC)...
+C:\portfolio-risk-analytics\venv\Lib\site-packages\statsmodels\tsa\base\tsa_model.py:473: ValueWarning: A date index has been provided, but it has no associated frequency information and so will be ignored when e.g. forecasting.
+  self._init_dates(dates, freq)
+09:46:31  WARNING     VAR fitting failed: 1-th leading minor of the array is not positive definite
+09:46:31  INFO        ✔ M4 saved → models/ml/m4_granger_results.csv + m4_ccf_results.csv
+09:46:31  INFO      ── [M5] Sentiment-Vol Regression (Ridge + SHAP, per-portfolio) ──
+09:46:31  INFO        Domain sentiment cross-correlation:
+                              sentiment_score_financial  sentiment_score_geopolitical  sentiment_score_technology
+sentiment_score_financial                           NaN                           NaN                         NaN
+sentiment_score_geopolitical                        NaN                         1.000                      -0.011
+sentiment_score_technology                          NaN                        -0.011                       1.000
+09:46:32  INFO        geopolitical → R²=0.7321 | alpha=10.0000 | Top: lagged_vol_geopolitical (0.0038)
+09:46:32  INFO          SHAP skipped for M5/geopolitical: No module named 'shap'
+09:46:32  INFO        tech → R²=0.6090 | alpha=10.0000 | Top: lagged_vol_tech (0.0071)
+09:46:32  INFO          SHAP skipped for M5/tech: No module named 'shap'
+09:46:32  INFO        balanced → R²=0.5428 | alpha=10.0000 | Top: lagged_vol_balanced (0.0022)
+09:46:32  INFO          SHAP skipped for M5/balanced: No module named 'shap'
+09:46:32  INFO        conservative → R²=0.6622 | alpha=10.0000 | Top: lagged_vol_conservative (0.0023)
+09:46:32  INFO          SHAP skipped for M5/conservative: No module named 'shap'
+09:46:32  INFO        ✔ M5 Ridge coefficients → models/ml/m5_lasso_coefficients.csv     
+09:46:32  INFO        ✔ M5 domain coefficients → models/ml/m5_domain_coefficients.csv
+09:46:32  INFO      ── [M6] Portfolio Clustering (M5-sensitivity + hierarchical) ──     
+09:46:32  INFO        Using M5 domain sensitivity coefficients as primary clustering features.
+09:46:34  INFO        Silhouette scores: {2: 0.2985865666185502, 3: 0.10938730876744299} | Best k=2
+09:46:34  INFO        Cluster assignments:
+                        kmeans_label      hierarchical_label
+portfolio
+geopolitical  Geopolitical-Sensitive  Geopolitical-Sensitive
+tech          Geopolitical-Sensitive  Geopolitical-Sensitive
+balanced      Geopolitical-Sensitive  Geopolitical-Sensitive
+conservative  Geopolitical-Sensitive  Geopolitical-Sensitive
+09:46:34  INFO        ✔ M6 saved → models/ml/m6_clusters.csv
+09:46:34  INFO        ✔ Results summary → reports/ml_results_summary.txt
+09:46:34  INFO
+09:46:34  INFO      =================================================================   
+09:46:34  INFO        ALL MODELS COMPLETE (v2)
+09:46:34  INFO        Models  → C:\portfolio-risk-analytics\models\ml
+09:46:34  INFO        Summary → C:\portfolio-risk-analytics\reports\ml_results_summary.txt
+09:46:34  INFO      =================================================================   
+
+(venv) C:\portfolio-risk-analytics>
+
+
+
+09:46:34  INFO        ALL MODELS COMPLETE (v2)
+09:46:34  INFO        Models  → C:\portfolio-risk-analytics\models\ml
+09:46:34  INFO        Summary → C:\portfolio-risk-analytics\reports\ml_results_summary.txt
+09:46:34  INFO      =================================================================   
+
+(venv) C:\portfolio-risk-analytics>
+
+
+09:46:34  INFO        ALL MODELS COMPLETE (v2)
+09:46:34  INFO        Models  → C:\portfolio-risk-analytics\models\ml
+09:46:34  INFO        Summary → C:\portfolio-risk-analytics\reports\ml_results_summary.txt
+09:46:34  INFO      =================================================================   
+
+(venv) C:\portfolio-risk-analytics>
+09:46:34  INFO        ALL MODELS COMPLETE (v2)
+09:46:34  INFO        Models  → C:\portfolio-risk-analytics\models\ml
+09:46:34  INFO        Summary → C:\portfolio-risk-analytics\reports\ml_results_summary.txt
+09:46:34  INFO      =================================================================   
+
+09:46:34  INFO        ALL MODELS COMPLETE (v2)
+09:46:34  INFO        Models  → C:\portfolio-risk-analytics\models\ml
+09:46:34  INFO        Summary → C:\portfolio-risk-analytics\reports\ml_results_summary.txt
+09:46:34  INFO        ALL MODELS COMPLETE (v2)
+09:46:34  INFO        Models  → C:\portfolio-risk-analytics\models\ml
+09:46:34  INFO        Summary → C:\portfolio-risk-analytics\reports\ml_results_summary.t09:46:34  INFO        ALL MODELS COMPLETE (v2)
+09:46:34  INFO        Models  → C:\portfolio-risk-analytics\models\ml
+09:46:34  INFO        Summary → C:\portfolio-risk-analytics\reports\ml_results_summary.t09:46:34  INFO        ALL MODELS COMPLETE (v2)
+09:46:34  INFO        ALL MODELS COMPLETE (v2)
+09:46:34  INFO        Models  → C:\portfolio-risk-analytics\models\ml
+09:46:34  INFO        Summary → C:\portfolio-risk-analytics\reports\ml_results_summary.txt
+09:46:34  INFO      =================================================================

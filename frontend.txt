@@ -1,0 +1,12 @@
+user mode:
+1.take input for the types of stocks ticker  from dropdown and number of stocks and date ( date to be chosen only from the time window we have scraped) 
+2. on basis of stocks and weighatge a type of portfolio from the 4 is assigned by us
+3.recommended course of action + justification (using xai- options for short summary and detailed using graphs keep this using toggle),line graph for tickers
+4.recovery justification
+5. map how every ml model is helping out the user ( this will be visible only if the user chooses the toggle of detailed reasoning xai )
+
+technical mode:
+1.arima
+2.6 ml models hypothesis eda statistical analysis mapping to the models
+3. placing of power bi graphs and decide what graphs to create from the analysis and datsets
+

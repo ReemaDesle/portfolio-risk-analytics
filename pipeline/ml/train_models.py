@@ -862,11 +862,23 @@ def train_m4_cross_domain_lag(df: pd.DataFrame, results: dict,
         s = series.dropna()
         if len(s) < 12:
             return series
-        p_val = adfuller(s, autolag="BIC")[1]
-        adf_results[name] = {"p_value": round(p_val, 4), "stationary": p_val < 0.05}
-        if p_val >= 0.05:
-            log.info("    '%s' non-stationary (p=%.4f) → differencing", name, p_val)
-            return series.diff(1)
+        
+        # Check for constant values (zero variance)
+        if s.nunique() <= 1:
+            log.warning("    '%s' is constant (no variance) — skipping ADF", name)
+            adf_results[name] = {"p_value": 1.0, "stationary": True}
+            return series
+            
+        try:
+            p_val = adfuller(s, autolag="BIC")[1]
+            adf_results[name] = {"p_value": round(p_val, 4), "stationary": p_val < 0.05}
+            if p_val >= 0.05:
+                log.info("    '%s' non-stationary (p=%.4f) → differencing", name, p_val)
+                return series.diff(1)
+        except Exception as e:
+            log.warning("    ADF failed for '%s': %s", name, str(e))
+            adf_results[name] = {"p_value": 1.0, "stationary": True}
+            
         return series
 
     df_stat = df.copy()
@@ -896,7 +908,7 @@ def train_m4_cross_domain_lag(df: pd.DataFrame, results: dict,
             continue
 
         pair = df_stat[[cause_col, effect_col]].dropna()
-        if len(pair) < 10:
+        if len(pair) < 10 or pair[cause_col].nunique() <= 1 or pair[effect_col].nunique() <= 1:
             continue
 
         x = pair[cause_col].values
@@ -909,6 +921,10 @@ def train_m4_cross_domain_lag(df: pd.DataFrame, results: dict,
                 corr = float(np.corrcoef(x, y)[0, 1])
             else:
                 corr = float(np.corrcoef(x[:-lag], y[lag:])[0, 1])
+            
+            # Use 0.0 if corr is NaN (e.g. constant slice not caught above)
+            corr = 0.0 if np.isnan(corr) else corr
+            
             ccf_rows.append({
                 "cause":            cause_domain,
                 "effect":           effect_pf,
@@ -919,12 +935,23 @@ def train_m4_cross_domain_lag(df: pd.DataFrame, results: dict,
     ccf_df = pd.DataFrame(ccf_rows)
     if not ccf_df.empty:
         ccf_df.to_csv(MODELS_DIR / "m4_ccf_results.csv", index=False)
-        peak_ccf = ccf_df.loc[ccf_df.groupby(["cause", "effect"])["ccf_correlation"].apply(
-            lambda x: x.abs().idxmax()
-        )]
-        log.info("  Peak CCF lags:\n%s",
-                 peak_ccf[["cause", "effect", "lag", "ccf_correlation"]].to_string(index=False))
-        log.info("  ✔ CCF results saved → models/ml/m4_ccf_results.csv")
+        
+        # Discover peak lag per pair, ignoring groups that are all zeros/NaNs
+        def safe_idxmax(s):
+            abs_s = s.abs()
+            if abs_s.max() == 0 or abs_s.isna().all():
+                return None
+            return abs_s.idxmax()
+
+        peak_indices = ccf_df.groupby(["cause", "effect"])["ccf_correlation"].apply(safe_idxmax).dropna()
+        
+        if not peak_indices.empty:
+            peak_ccf = ccf_df.loc[peak_indices]
+            log.info("  Peak CCF lags:\n%s",
+                     peak_ccf[["cause", "effect", "lag", "ccf_correlation"]].to_string(index=False))
+            log.info("  ✔ CCF results saved → models/ml/m4_ccf_results.csv")
+        else:
+            log.warning("  No significant CCF correlations found.")
 
     # ── Step 3: Granger — validate statistically, with confounder ────────────
     log.info("  Step 3: Granger causality tests (validate CCF findings)...")
