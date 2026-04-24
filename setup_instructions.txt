@@ -106,3 +106,54 @@ Leave Terminal 1 running and open a **new terminal window**.
 *(Your frontend will spin up! Open the URL provided in the terminal, usually http://localhost:5173, in your browser to view the dynamic dashboard).*
 
 You are now fully set up and ready to run the ML inference!
+
+---
+
+## 5. Project Directory Structure
+
+Here is a diagrammatical overview of the project structure for reference when adding or modifying files:
+
+```text
+portfolio-risk-analytics/
+├── .env                          # API keys (Needs to be created as per Section 1a)
+├── requirements.txt              # Python dependencies
+├── setup_instructions.txt        # This file
+├── README.md
+├── dashboard/                    # Full stack application
+│   ├── main.py                   # FastAPI backend server
+│   └── frontend/                 # React UI
+│       ├── package.json          # Node dependencies
+│       └── src/                  # React frontend source code
+├── data/                         # Datasets folder
+│   ├── processed/                # Place provided clean CSVs here! (See Section 1b)
+│   │   ├── master_data.csv
+│   │   ├── master_news.csv
+│   │   ├── ml_features.csv
+│   │   └── ...
+│   └── raw/                      # Raw uncleaned data
+│       ├── news/                 # Raw scraped news
+│       └── tickers/              # Uncleaned ticker data
+├── models/                       # Machine Learning models
+│   ├── ml/                       # Place pre-trained .pkl and .csv files here! (See Section 3)
+│   │   ├── m1_shock_classifier.pkl
+│   │   └── ...
+│   ├── finbert/                  # Local FinBERT model weights
+│   └── roberta/                  # Local RoBERTa model weights
+├── notebooks/                    # Jupyter notebooks for EDA, Stats, and Prototyping
+├── pipeline/                     # Core ML and Data engineering Pipeline
+│   ├── clean_data.py             
+│   ├── analysis/                 # Baseline and time-series analysis
+│   ├── ml/                       # Model training and inference scripts
+│   │   ├── infer.py              
+│   │   └── train_models.py       # Script to train ML models locally
+│   └── sentiment_scoring/        # NLP pipelines for news scoring
+│       ├── score_compute.py
+│       └── ...
+├── reports/                      # Generated analytical reports
+│   └── plots/                    # Saved EDA and ARIMAX charts
+└── scrapers/                     # Scripts to fetch new data from external APIs
+    ├── fetch_prices.py
+    ├── scrape_finance.py
+    ├── scrape_geo.py
+    └── scrape_tech.py
+```
