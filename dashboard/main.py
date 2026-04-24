@@ -1,4 +1,4 @@
-import sys, pathlib, io, json, re, requests
+import sys, pathlib, io, json, re
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 import pandas as pd
@@ -78,53 +78,7 @@ def _read_text(path: pathlib.Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def _get_ai_reasoning(metrics: dict, action: str, mapped_archetype: str) -> str:
-    """Uses Groq API to generate human-readable advisory reasoning."""
-    if not GROQ_API_KEY:
-        return "AI reasoning unavailable (no API key)."
-    
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "model": "llama-3.1-70b-versatile",
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a Senior Risk Strategist at an institutional hedge fund. "
-                    "Your task is to provide a concise, high-impact reasoning for a portfolio advisory signal. "
-                    "Use the provided ML metrics to justify the action (BUY, HOLD, or REDUCE). "
-                    "Be professional, data-driven, and brief (max 3 sentences)."
-                )
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Portfolio Archetype: {mapped_archetype}\n"
-                    f"Recommended Action: {action}\n"
-                    f"ML Metrics Context: {json.dumps(metrics)}\n\n"
-                    "Provide the expert justification now."
-                )
-            }
-        ],
-        "temperature": 0.5,
-        "max_tokens": 150
-    }
-    
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=5)
-        if resp.status_code == 200:
-            return resp.json()["choices"][0]["message"]["content"].strip()
-        elif resp.status_code == 401:
-            return "AI Logic skipped (Invalid or expired GROQ_API_KEY in .env)"
-        else:
-            return f"AI Logic skipped (API Error {resp.status_code})"
-    except Exception:
-        return "AI Logic skipped (Inference timeout)"
+
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -255,14 +209,7 @@ def analyze_portfolio(req: AnalyzeRequest):
         "m6": result.get("m6"),
     }
     
-    # Generate dynamic AI reasoning via Groq
-    context = {
-        "shock_prob": response["m1"].get("shock_probability"),
-        "risk_level": response["m3"].get("risk_label"),
-        "sensitivity": response["m4_m5"].get("dominant_domain"),
-        "recovery": response["m2"].get("band_label")
-    }
-    response["justification"]["ai_expert"] = _get_ai_reasoning(context, response["action"], archetype)
+
 
     return _sanitize(response)
 
@@ -290,31 +237,77 @@ def get_metrics():
 
     # Model Performance Stats
     ml_models = {
-        "M1": {"name": "Shock", "val": _find(r"tech:.*?auc_roc:\s*([\d.]+)", summary_content, 0.82), "unit": "AUC"},
-        "M2": {"name": "Recovery", "val": _find(r"median_MAE_days:\s*([\d.]+)", summary_content, 2.23), "unit": "MAE (d)"},
-        "M3": {"name": "Risk", "val": _find(r"tech:.*?Ridge:.*?R2':\s*([-]?[\d.]+)", summary_content, 0.32), "unit": "R²"},
-        "M4": {"name": "Causal", "val": 0.006, "unit": "p-val"},
-        "M5": {"name": "Sens", "val": _find(r"tech:.*?r=([-]?[\d.]+)", eda_content, 0.40), "unit": "Corr"},
-        "M6": {"name": "Cluster", "val": _find(r"2:\s*([\d.]+)", summary_content, 0.25), "unit": "S-Score"},
+        "M1": {
+            "name": "Market Shock Detector", 
+            "val": _find(r"tech:.*?auc_roc:\s*([\d.]+)", summary_content, 0.82), 
+            "unit": "Accuracy Score",
+            "aim": "Predicts if a major market drop is likely tomorrow.",
+            "insight": "A high score means the model is excellent at spotting early warning signs of a downturn."
+        },
+        "M2": {
+            "name": "Stabilization Timer", 
+            "val": _find(r"median_MAE_days:\s*([\d.]+)", summary_content, 2.23), 
+            "unit": "Timing Error (days)",
+            "aim": "Estimates how many days it takes for markets to calm after a shock.",
+            "insight": "Shows how close the model's 'days-to-recover' estimates are to the actual historical data."
+        },
+        "M3": {
+            "name": "Volatility Forecast", 
+            "val": _find(r"tech:.*?Ridge:.*?R2':\s*([-]?[\d.]+)", summary_content, 0.32), 
+            "unit": "Prediction Strength",
+            "aim": "Forecasts expected price swings based on news sentiment.",
+            "insight": "Indicates how much the predicted portfolio movement aligns with real market fluctuations."
+        },
+        "M4": {
+            "name": "News Lead-Time Signal", 
+            "val": 0.006, 
+            "unit": "Signal Quality",
+            "aim": "Tests if news headlines actually lead market moves or just react to them.",
+            "insight": "Scores near zero confirm that news headlines are a reliable predictor of future price changes."
+        },
+        "M5": {
+            "name": "Domain Sensitivity Link", 
+            "val": _find(r"tech:.*?r=([-]?[\d.]+)", eda_content, 0.40), 
+            "unit": "Connection Strength",
+            "aim": "Measures how strongly this portfolio reacts to specific news types (Tech vs Geo).",
+            "insight": "A higher score means your assets are mathematically more reactive to global news events."
+        },
+        "M6": {
+            "name": "Behavioral Grouping", 
+            "val": _find(r"2:\s*([\d.]+)", summary_content, 0.25), 
+            "unit": "Consistency Score",
+            "aim": "Groups assets by how they actually move, not just their industry labels.",
+            "insight": "Measures how consistently your assets behave within their assigned risk categories.",
+            "assignments": {
+                "tech":         "Geopolitical-Sensitive",
+                "geopolitical": "Geopolitical-Sensitive",
+                "balanced":     "Market-Sensitive",
+                "conservative": "Yield-Sensitive",
+            }
+        },
     }
 
     # Radar data for visualization
     # Normalise values to 0-1 scale for radar context
     radar_data = [
-        {"subject": "M1: Accuracy", "A": min(1.0, ml_models["M1"]["val"]), "fullMark": 1},
-        {"subject": "M2: Stability", "A": max(0.1, 1 - (ml_models["M2"]["val"]/10)), "fullMark": 1},
-        {"subject": "M3: Precision", "A": max(0.1, ml_models["M3"]["val"] + 0.2), "fullMark": 1},
-        {"subject": "M4: Signal", "A": 0.94, "fullMark": 1}, # p-value inverse
-        {"subject": "M5: Impact", "A": abs(ml_models["M5"]["val"]) * 2, "fullMark": 1},
-        {"subject": "M6: Cohere", "A": ml_models["M6"]["val"] * 2, "fullMark": 1},
+        {"subject": "Shock Detection", "A": min(1.0, ml_models["M1"]["val"]), "fullMark": 1},
+        {"subject": "Timing Precision", "A": max(0.1, 1 - (ml_models["M2"]["val"]/10)), "fullMark": 1},
+        {"subject": "Risk Coverage", "A": max(0.1, ml_models["M3"]["val"] + 0.2), "fullMark": 1},
+        {"subject": "Signal Lead", "A": 0.94, "fullMark": 1}, # p-value inverse
+        {"subject": "News Reactivity", "A": abs(ml_models["M5"]["val"]) * 2, "fullMark": 1},
+        {"subject": "Group Cohesion", "A": ml_models["M6"]["val"] * 2, "fullMark": 1},
     ]
 
     # Images to serve
     plots = [
         {"id": "timeline", "title": "Coverage", "url": "/reports/plots/00_timeline_coverage.png"},
         {"id": "returns",  "title": "Returns",  "url": "/reports/plots/01_return_distributions.png"},
+        {"id": "panic",    "title": "Panic Detection", "url": "/reports/plots/02_panic_detection.png"},
         {"id": "corr",     "title": "Correlation", "url": "/reports/plots/03_correlation_heatmap.png"},
         {"id": "shock",    "title": "Shock Absorption", "url": "/reports/plots/04_shock_absorption_timeline.png"},
+        {"id": "stab",     "title": "Stabilisation Time", "url": "/reports/plots/11_stabilisation_time.png"},
+        {"id": "pred",     "title": "Predictive Power", "url": "/reports/plots/10_predictive_power.png"},
+        {"id": "roll",     "title": "Rolling Correlation", "url": "/reports/plots/12_rolling_correlation.png"},
     ]
 
     statistical_tests = {

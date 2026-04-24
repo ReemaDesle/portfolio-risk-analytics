@@ -180,7 +180,7 @@ export default function App() {
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <ShieldCheck size={28} color={C.accent} />
-          <span style={{ fontWeight: 800, fontSize: '1.2rem', color: C.text }}>ANTIGRAVITY</span>
+          <span style={{ fontWeight: 800, fontSize: '1.2rem', color: C.text }}>PORTFOLIO RISK ANALYTICS</span>
         </div>
 
         <nav style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -279,22 +279,61 @@ export default function App() {
                     <Card glow={colorOf(analysis.m1.signal_color)}>
                        <Label>Shock Signal (M1)</Label>
                        <BigNum color={colorOf(analysis.m1.signal_color)}>{analysis.m1.signal}</BigNum>
+                       <div style={{ fontSize: '0.75rem', marginTop: 8 }}>
+                          Prob: {(analysis.m1.shock_probability * 100).toFixed(1)}%
+                       </div>
                     </Card>
-                    <Card glow={analysis.action === 'REDUCE / HEDGE' ? C.danger : C.success}>
+                    <Card glow={analysis.action === 'REDUCE / HEDGE' ? C.danger : analysis.action === 'BUY / ADD' ? C.success : C.accent}>
                        <Label>Advisory Engine</Label>
-                       <BigNum color={analysis.action === 'REDUCE / HEDGE' ? C.danger : C.success} size="1.4rem">{analysis.action}</BigNum>
+                       <BigNum color={analysis.action === 'REDUCE / HEDGE' ? C.danger : analysis.action === 'BUY / ADD' ? C.success : C.accent} size="1.4rem">
+                         {analysis.action}
+                       </BigNum>
+                       <div style={{ fontSize: '0.75rem', marginTop: 12 }}>
+                          Confidence: {analysis.confidence}
+                       </div>
                     </Card>
                     <Card>
                        <Label>Mapped Archetype</Label>
                        <BigNum size="1.4rem" style={{ textTransform: 'capitalize' }}>{analysis.mapped_archetype}</BigNum>
+                       <div style={{ fontSize: '0.75rem', marginTop: 12 }}>
+                          Risk Profile: {metrics?.ml_models?.M6?.assignments?.[analysis.mapped_archetype] || 'Standard'}
+                       </div>
                     </Card>
                   </div>
 
                   <Card style={{ borderLeft: `6px solid ${C.accent}`, background: `${C.card}ee` }}>
-                    <SectionHeading icon={BrainCircuit} title="GenAI Advisory" sub="Context-aware reasoning via Groq" />
-                    <p style={{ lineHeight: 1.7, fontSize: '1.05rem', color: C.text, fontWeight: 500, fontStyle: 'italic' }}>
-                      "{analysis.justification.ai_expert || analysis.justification.short}"
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                      <SectionHeading icon={Activity} title="AI Justification" sub="Machine learning synthesis of current conditions" />
+                      <button 
+                        onClick={() => setShowDetailedXAI(!showDetailedXAI)}
+                        style={{ background: C.surface, border: `1px solid ${C.border}`, color: C.accent, borderRadius: 8, padding: '4px 12px', fontSize: '0.7rem', fontWeight: 700, cursor: 'pointer' }}
+                      >
+                        {showDetailedXAI ? "Show Summary" : "View Detailed XAI"}
+                      </button>
+                    </div>
+
+                    <p style={{ lineHeight: 1.7, fontSize: '1rem', color: C.text }}>
+                      {showDetailedXAI ? analysis.justification.detailed : analysis.justification.short}
                     </p>
+
+                    {showDetailedXAI && (
+                      <div style={{ marginTop: '2rem', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                         <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: '1rem', background: `${C.bg}44` }}>
+                            <Label style={{ color: C.accent }}>Recovery Justification (M2)</Label>
+                            <p style={{ fontSize: '0.8rem', color: C.muted, margin: '8px 0' }}>{analysis.m2.band_label}</p>
+                            <div style={{ fontSize: '0.7rem', color: C.muted, fontStyle: 'italic', marginTop: 8 }}>{analysis.m2.note}</div>
+                         </div>
+                         <div style={{ border: `1px solid ${C.border}`, borderRadius: 12, padding: '1rem', background: `${C.bg}44` }}>
+                            <Label style={{ color: C.warning }}>Domain Sensitivity (M5)</Label>
+                            <p style={{ fontSize: '0.8rem', color: C.muted, margin: '8px 0' }}>{analysis.m4_m5.note}</p>
+                            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                               {Object.entries(analysis.m4_m5.coefficients).sort((a,b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 2).map(([dom, coef]) => (
+                                 <Badge key={dom} label={`${dom}: ${coef.toFixed(4)}`} color={C.warning} />
+                               ))}
+                            </div>
+                         </div>
+                      </div>
+                    )}
                   </Card>
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '1rem' }}>
@@ -348,11 +387,29 @@ export default function App() {
                   </ResponsiveContainer>
                </Card>
 
-               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.25rem' }}>
                   {Object.entries(metrics.ml_models).map(([key, m]) => (
-                    <Card key={key} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                       <Label>{key}: {m.name}</Label>
-                       <BigNum size="1.2rem">{m.val?.toFixed(2)} <span style={{ fontSize: '0.7rem', color: C.muted }}>{m.unit}</span></BigNum>
+                    <Card key={key} style={{ display: 'flex', flexDirection: 'column', padding: '1.5rem', minHeight: 180 }}>
+                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+                          <div>
+                             <Label style={{ color: C.accent, fontSize: '0.7rem', marginBottom: 4 }}>MODEL {key}</Label>
+                             <div style={{ fontWeight: 800, fontSize: '1.1rem' }}>{m.name}</div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                             <BigNum size="1.2rem">{m.val?.toFixed(2)}</BigNum>
+                             <div style={{ fontSize: '0.65rem', color: C.muted, fontWeight: 700 }}>{m.unit}</div>
+                          </div>
+                       </div>
+                       
+                       <div style={{ borderLeft: `2px solid ${C.border}`, paddingLeft: 12, marginBottom: 12 }}>
+                          <div style={{ fontSize: '0.75rem', color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Goal</div>
+                          <div style={{ fontSize: '0.85rem', lineHeight: 1.4 }}>{m.aim}</div>
+                       </div>
+
+                       <div style={{ background: `${C.accent}08`, borderRadius: 8, padding: '0.75rem' }}>
+                          <div style={{ fontSize: '0.75rem', color: C.accent, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Inference</div>
+                          <div style={{ fontSize: '0.8rem', opacity: 0.9, lineHeight: 1.4 }}>{m.insight}</div>
+                       </div>
                     </Card>
                   ))}
                </div>

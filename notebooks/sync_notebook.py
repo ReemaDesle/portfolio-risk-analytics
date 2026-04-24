@@ -1,10 +1,7 @@
 import json
 from pathlib import Path
 import re
-
-ROOT_DIR = Path(__file__).resolve().parent.parent
-PY_FILE = ROOT_DIR / "notebooks" / "01_eda.py"
-NB_FILE = ROOT_DIR / "notebooks" / "01_eda_and_hypothesis_testing.ipynb"
+import argparse
 
 def create_markdown_cell(source):
     return {
@@ -29,8 +26,11 @@ def create_code_cell(source):
         "source": [s + "\n" for s in source.split("\n")]
     }
 
-def convert_py_to_ipynb():
-    content = PY_FILE.read_text(encoding="utf-8")
+def convert_py_to_ipynb(py_path, nb_path):
+    py_file = Path(py_path)
+    nb_file = Path(nb_path)
+    
+    content = py_file.read_text(encoding="utf-8")
     
     # Split by the header delimiters
     blocks = re.split(r'# ══════════════════════════════════════════════\n', content)
@@ -54,13 +54,13 @@ def convert_py_to_ipynb():
         if not block.strip():
             continue
             
-        # The first non-empty line usually looks like: # FIGURE X — Return distributions
+        # The first non-empty line usually looks like: # FIGURE X or # TEST X
         lines = block.split("\n")
         title_line = ""
         code_lines = []
         
         for line in lines:
-            if line.startswith("# FIGURE") or line.startswith("# Main") or line.startswith("# ───"):
+            if line.startswith("# FIGURE") or line.startswith("# TEST") or line.startswith("# Main") or line.startswith("# ───"):
                 title_line = line.replace("# ", "").strip()
             else:
                 code_lines.append(line)
@@ -70,16 +70,18 @@ def convert_py_to_ipynb():
             
         code = "\n".join(code_lines).strip()
         if code:
-            # If it contains the entry point, split the definition from the execution call
-            if "if __name__ == \"__main__\":" in code:
-                # 1. Remove the if __name__ block to leave the definition
+            # Look for entry point to replace with function call
+            # We match 'run_...()' pattern dynamically
+            main_match = re.search(r'run_\w+\(\)', code)
+            if "if __name__ == \"__main__\":" in code and main_match:
+                # Remove the if __name__ block to leave the definition
                 definition = re.sub(r'if __name__ == "__main__":.*', '', code, flags=re.DOTALL).strip()
                 if definition:
                     cells.append(create_code_cell(definition))
                 
-                # 2. Add a clear header and the standalone final call
-                cells.append(create_markdown_cell("### Execution Interface\nRun the integrated EDA pipeline now."))
-                cells.append(create_code_cell("run_eda_pipeline()"))
+                # Add standalone call
+                cells.append(create_markdown_cell("### Execution Interface"))
+                cells.append(create_code_cell(main_match.group(0)))
             else:
                 cells.append(create_code_cell(code))
             
@@ -105,8 +107,19 @@ def convert_py_to_ipynb():
         "nbformat_minor": 4
     }
     
-    NB_FILE.write_text(json.dumps(notebook, indent=1, ensure_ascii=False), encoding="utf-8")
-    print(f"Successfully synced {PY_FILE.name} into {NB_FILE.name} via standard JSON.")
+    nb_file.write_text(json.dumps(notebook, indent=1, ensure_ascii=False), encoding="utf-8")
+    print(f"Successfully synced {py_file.name} into {nb_file.name}")
 
 if __name__ == "__main__":
-    convert_py_to_ipynb()
+    parser = argparse.ArgumentParser(description="Sync .py scripts to .ipynb notebooks")
+    parser.add_argument("--src", help="Source .py file")
+    parser.add_argument("--dest", help="Destination .ipynb file")
+    
+    args = parser.parse_args()
+    
+    if args.src and args.dest:
+        convert_py_to_ipynb(args.src, args.dest)
+    else:
+        # Backward compatibility for EDA
+        root = Path(__file__).resolve().parent.parent
+        convert_py_to_ipynb(root / "notebooks" / "01_eda.py", root / "notebooks" / "01_eda_and_hypothesis_testing.ipynb")

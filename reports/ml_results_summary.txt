@@ -6,66 +6,65 @@
   M1
 ─────────────────────────────────────────────────────────────────
   geopolitical:
-    n_shock_events: 20
-    f1_calibrated: 0.4167
-    auc_roc: 0.8623
-    threshold: 0.115
+    n_shock_events: 93
+    f1_calibrated: 0.5495
+    auc_roc: 0.9543
+    threshold: 0.489
   tech:
-    n_shock_events: 39
-    f1_calibrated: 0.3913
-    auc_roc: 0.8209
-    threshold: 0.296
+    n_shock_events: 63
+    f1_calibrated: 0.615
+    auc_roc: 0.9484
+    threshold: 0.568
   balanced:
-    n_shock_events: 46
-    f1_calibrated: 0.5748
-    auc_roc: 0.8643
-    threshold: 0.354
+    n_shock_events: 88
+    f1_calibrated: 0.6334
+    auc_roc: 0.9419
+    threshold: 0.656
   conservative:
-    n_shock_events: 34
-    f1_calibrated: 0.4536
-    auc_roc: 0.7765
-    threshold: 0.318
+    n_shock_events: 57
+    f1_calibrated: 0.7063
+    auc_roc: 0.949
+    threshold: 0.501
 
 ─────────────────────────────────────────────────────────────────
   M2
 ─────────────────────────────────────────────────────────────────
-  median_MAE_days: 2.23
-  gbr_MAE_days: 2.31
-  median_R2: -0.167
-  avg_band_P25_P75_days: 5.4
-  n_pooled_shock_events: 244
+  median_MAE_days: 2.12
+  gbr_MAE_days: 2.45
+  median_R2: -0.1836
+  avg_band_P25_P75_days: 4.9
+  n_pooled_shock_events: 281
   dashboard_output: Recovery expected in 2–7 days (median 4 days)
 
 ─────────────────────────────────────────────────────────────────
   M3
 ─────────────────────────────────────────────────────────────────
   geopolitical:
-    Ridge: {'R2': 0.2045, 'MAE': 0.00198}
-    MLP: {'R2': -2377.0536, 'MAE': 0.11607}
-    risk_band_width_avg: 0.003766
+    Ridge: {'R2': 0.5681, 'MAE': 0.003461}
+    MLP: {'R2': -83.775, 'MAE': 0.053432}
+    risk_band_width_avg: 0.004022
     relationship_is_nonlinear: False
   tech:
-    Ridge: {'R2': 0.3239, 'MAE': 0.003001}
-    MLP: {'R2': -952.7998, 'MAE': 0.115027}
-    risk_band_width_avg: 0.005829
+    Ridge: {'R2': 0.5809, 'MAE': 0.003942}
+    MLP: {'R2': -54.5619, 'MAE': 0.056695}
+    risk_band_width_avg: 0.005656
     relationship_is_nonlinear: False
   balanced:
-    Ridge: {'R2': 0.138, 'MAE': 0.001171}
-    MLP: {'R2': -9036.9676, 'MAE': 0.115583}
-    risk_band_width_avg: 0.002239
+    Ridge: {'R2': 0.6403, 'MAE': 0.001662}
+    MLP: {'R2': -249.0436, 'MAE': 0.055021}
+    risk_band_width_avg: 0.002523
     relationship_is_nonlinear: False
   conservative:
-    Ridge: {'R2': 0.3039, 'MAE': 0.001484}
-    MLP: {'R2': -4093.8491, 'MAE': 0.115079}
-    risk_band_width_avg: 0.002419
+    Ridge: {'R2': 0.5254, 'MAE': 0.001374}
+    MLP: {'R2': -598.8585, 'MAE': 0.05314}
+    risk_band_width_avg: 0.002473
     relationship_is_nonlinear: False
 
 ─────────────────────────────────────────────────────────────────
   M4
 ─────────────────────────────────────────────────────────────────
-  significant_pairs: [{'cause': 'geopolitical', 'effect': 'tech', 'lag': 3, 'p_value': 0.0062, 'controlled_for_fin': True}, {'cause': 'geopolitical', 'effect': 'tech', 'lag': 4, 'p_value': 0.0133, 'controlled_for_fin': True}, {'cause': 'geopolitical', 'effect': 'tech', 'lag': 5, 'p_value': 0.0232, 'controlled_for_fin': True}, {'cause': 'financial', 'effect': 'tech', 'lag': 1, 'p_value': 0.0366, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'tech', 'lag': 2, 'p_value': 0.0029, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'tech', 'lag': 3, 'p_value': 0.0088, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'tech', 'lag': 4, 'p_value': 0.0263, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'tech', 'lag': 5, 'p_value': 0.0337, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'balanced', 'lag': 1, 'p_value': 0.0045, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'balanced', 'lag': 2, 'p_value': 0.0, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'balanced', 'lag': 3, 'p_value': 0.0001, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'balanced', 'lag': 4, 'p_value': 0.0001, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'balanced', 'lag': 5, 'p_value': 0.0003, 'controlled_for_fin': False}]
+  significant_pairs: []
   adf_results:
-    sentiment_score_financial: {'p_value': np.float64(0.0), 'stationary': np.True_}
     sentiment_score_geopolitical: {'p_value': 0.0, 'stationary': True}
     sentiment_score_technology: {'p_value': 0.0, 'stationary': True}
     vol5_geopolitical: {'p_value': np.float64(0.0), 'stationary': np.True_}
@@ -78,38 +77,38 @@
   M5
 ─────────────────────────────────────────────────────────────────
   geopolitical:
-    R2: 0.728
-    alpha: 10.0
-    top_predictors: [{'feature': 'lagged_vol_geopolitical', 'coefficient': 0.003756254767680414}, {'feature': 'lagged_vol_conservative', 'coefficient': 0.0003903196329813949}, {'feature': 'sentiment_3d_technology', 'coefficient': -0.00020730921214923267}, {'feature': 'sentiment_3d_financial', 'coefficient': -0.00018621387229830996}, {'feature': 'z_lag1_sentiment_score_financial', 'coefficient': -0.00017919612356404697}]
-    domain_coefficients: {'m5_coeff_financial': -0.00012210473115786808, 'm5_coeff_geopolitical': -2.1410146284242386e-05, 'm5_coeff_technology': 2.97714567566067e-05}
+    R2: 0.8092
+    alpha: 1.0
+    top_predictors: [{'feature': 'lagged_vol_geopolitical', 'coefficient': 0.0036213793277370112}, {'feature': 'lagged_vol_conservative', 'coefficient': 0.00036671750859709626}, {'feature': 'weighted_sentiment_geopolitical', 'coefficient': -0.0001761764994589433}, {'feature': 'weighted_sentiment_technology', 'coefficient': -0.00013271019875868442}, {'feature': 'sentiment_3d_technology', 'coefficient': -9.987068202720937e-05}]
+    domain_coefficients: {'m5_coeff_financial': 0.0, 'm5_coeff_geopolitical': 5.1040089560430896e-05, 'm5_coeff_technology': -3.683479490949916e-05}
   tech:
-    R2: 0.5981
+    R2: 0.7723
     alpha: 10.0
-    top_predictors: [{'feature': 'lagged_vol_tech', 'coefficient': 0.007114155110961906}, {'feature': 'sentiment_3d_financial', 'coefficient': -0.0007538203397699562}, {'feature': 'article_zscore_technology', 'coefficient': 0.0004578745112894218}, {'feature': 'lagged_vol_conservative', 'coefficient': 0.0004452803730366689}, {'feature': 'weighted_sentiment_technology', 'coefficient': -0.00037843424636151526}]
-    domain_coefficients: {'m5_coeff_financial': 0.00011247965856098404, 'm5_coeff_geopolitical': 0.00020318357588950067, 'm5_coeff_technology': 0.00011380555914519283}
+    top_predictors: [{'feature': 'lagged_vol_tech', 'coefficient': 0.0065199459187661735}, {'feature': 'article_zscore_technology', 'coefficient': 0.0005717614123135432}, {'feature': 'market_regime_flag', 'coefficient': -0.00048317219204774747}, {'feature': 'weighted_sentiment_technology', 'coefficient': -0.0003938522452927668}, {'feature': 'lagged_vol_conservative', 'coefficient': 0.0003412764388294205}]
+    domain_coefficients: {'m5_coeff_financial': 0.0, 'm5_coeff_geopolitical': 0.00012282590162474745, 'm5_coeff_technology': -1.4173544498523658e-05}
   balanced:
-    R2: 0.5478
+    R2: 0.8155
     alpha: 10.0
-    top_predictors: [{'feature': 'lagged_vol_balanced', 'coefficient': 0.002235863991279963}, {'feature': 'sentiment_3d_financial', 'coefficient': -0.0002893213549461529}, {'feature': 'lagged_vol_conservative', 'coefficient': 0.00020980053770315704}, {'feature': 'market_regime_flag', 'coefficient': -0.00019114154601779248}, {'feature': 'weighted_sentiment_technology', 'coefficient': -0.00012807096489576294}]
-    domain_coefficients: {'m5_coeff_financial': 0.00011056133457384546, 'm5_coeff_geopolitical': -1.1883623208647734e-05, 'm5_coeff_technology': -2.617645609986194e-05}
+    top_predictors: [{'feature': 'lagged_vol_balanced', 'coefficient': 0.0020902332406382293}, {'feature': 'market_regime_flag', 'coefficient': -0.00023083398979493013}, {'feature': 'lagged_vol_conservative', 'coefficient': 0.0001991994951264641}, {'feature': 'article_zscore_geopolitical', 'coefficient': -0.0001557757763524403}, {'feature': 'article_zscore_technology', 'coefficient': 0.0001535381706528978}]
+    domain_coefficients: {'m5_coeff_financial': 0.0, 'm5_coeff_geopolitical': 1.2994738487840583e-05, 'm5_coeff_technology': -5.939662138288779e-05}
   conservative:
-    R2: 0.64
+    R2: 0.7633
     alpha: 10.0
-    top_predictors: [{'feature': 'lagged_vol_conservative', 'coefficient': 0.0023092358044921124}, {'feature': 'market_regime_flag', 'coefficient': -0.0002710026765867723}, {'feature': 'sentiment_interaction_geo_fin', 'coefficient': 0.00025590576336916395}, {'feature': 'article_count_geopolitical', 'coefficient': 0.0002279653122958756}, {'feature': 'lagged_vol_tech', 'coefficient': 0.00019501813450051504}]
-    domain_coefficients: {'m5_coeff_financial': 4.975178558000839e-05, 'm5_coeff_geopolitical': 8.032221016546292e-05, 'm5_coeff_technology': 2.1200572546478924e-05}
+    top_predictors: [{'feature': 'lagged_vol_conservative', 'coefficient': 0.002215199341342715}, {'feature': 'article_count_geopolitical', 'coefficient': 0.00020807677435319237}, {'feature': 'market_regime_flag', 'coefficient': -0.00019858659153040387}, {'feature': 'article_zscore_geopolitical', 'coefficient': -0.0001713296913493139}, {'feature': 'lagged_vol_tech', 'coefficient': 0.00012201808287944016}]
+    domain_coefficients: {'m5_coeff_financial': 0.0, 'm5_coeff_geopolitical': 2.352641641773123e-05, 'm5_coeff_technology': 4.403754878669816e-06}
 
 ─────────────────────────────────────────────────────────────────
   M6
 ─────────────────────────────────────────────────────────────────
   best_k: 2
   silhouettes:
-    2: 0.25640422834603294
-    3: 0.03065084584234362
+    2: 0.23830639352124894
+    3: 0.13148016546223013
   assignments:
-    geopolitical: Geopolitical-Sensitive
+    geopolitical: Technology-Sensitive
     tech: Geopolitical-Sensitive
-    balanced: Geopolitical-Sensitive
-    conservative: Geopolitical-Sensitive
+    balanced: Technology-Sensitive
+    conservative: Technology-Sensitive
   cluster_names:
     0: Geopolitical-Sensitive
-    1: Geopolitical-Sensitive
+    1: Technology-Sensitive

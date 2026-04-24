@@ -1,0 +1,28 @@
+Targeting Longitudinal Period: 2021-01-04 to 2026-04-16
+
+--- T1: STATIONARITY SUITE ---
+  pf_tech_ret                    | ADF p=0.0000 | KPSS p=0.1000 | Result: STATIONARY
+  pf_geopolitical_ret            | ADF p=0.0000 | KPSS p=0.1000 | Result: STATIONARY
+  z_sentiment_score_technology   | ADF p=0.0000 | KPSS p=0.1000 | Result: STATIONARY
+  z_sentiment_score_geopolitical | ADF p=0.0000 | KPSS p=0.0100 | Result: MIXED/NON-STATIONARY
+
+--- T2: GRANGER CAUSALITY MATRIX ---
+  z_sentiment_score_technology   -> pf_tech_ret          | Lag1 p=0.5763 | Lag2 p=0.8548 | Lag3 p=0.9459
+  z_sentiment_score_geopolitical -> pf_geopolitical_ret  | Lag1 p=0.4869 | Lag2 p=0.4099 | Lag3 p=0.5375
+
+--- T3: JOHANSEN COINTEGRATION ---
+  Geo Portfolio <-> Geo Sentiment | Trace Stat: 962.33 | Critical(95%): 15.49 | Cointegrated: YES
+
+--- T4: MULTI-YEAR BENCHMARK ANOVA ---
+  Year 2021 | F-Stat: 0.8726 | p-value: 0.4183
+  Year 2022 | F-Stat: 2.1139 | p-value: 0.1215
+  Year 2023 | F-Stat: 5.7204 | p-value: 0.0034
+  Year 2024 | F-Stat: 1.4521 | p-value: 0.2347
+  Year 2025 | F-Stat: 0.1285 | p-value: 0.8794
+  Year 2026 | F-Stat: 1.5744 | p-value: 0.2095
+
+--- T5: ARIMAX MODEL VALIDATION (LRT) ---
+  ARIMA LLF: 3393.35
+  ARIMAX LLF: 3393.51
+  LR Statistic: 0.3216 | P-value: 0.5706
+  CONCLUSION: Improvement is marginal at 95% confidence.
