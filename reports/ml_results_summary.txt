@@ -63,7 +63,16 @@
 ─────────────────────────────────────────────────────────────────
   M4
 ─────────────────────────────────────────────────────────────────
-  Status: SKIPPED by user flag
+  significant_pairs: [{'cause': 'geopolitical', 'effect': 'tech', 'lag': 3, 'p_value': 0.0062, 'controlled_for_fin': True}, {'cause': 'geopolitical', 'effect': 'tech', 'lag': 4, 'p_value': 0.0133, 'controlled_for_fin': True}, {'cause': 'geopolitical', 'effect': 'tech', 'lag': 5, 'p_value': 0.0232, 'controlled_for_fin': True}, {'cause': 'financial', 'effect': 'tech', 'lag': 1, 'p_value': 0.0366, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'tech', 'lag': 2, 'p_value': 0.0029, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'tech', 'lag': 3, 'p_value': 0.0088, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'tech', 'lag': 4, 'p_value': 0.0263, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'tech', 'lag': 5, 'p_value': 0.0337, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'balanced', 'lag': 1, 'p_value': 0.0045, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'balanced', 'lag': 2, 'p_value': 0.0, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'balanced', 'lag': 3, 'p_value': 0.0001, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'balanced', 'lag': 4, 'p_value': 0.0001, 'controlled_for_fin': False}, {'cause': 'financial', 'effect': 'balanced', 'lag': 5, 'p_value': 0.0003, 'controlled_for_fin': False}]
+  adf_results:
+    sentiment_score_financial: {'p_value': np.float64(0.0), 'stationary': np.True_}
+    sentiment_score_geopolitical: {'p_value': 0.0, 'stationary': True}
+    sentiment_score_technology: {'p_value': 0.0, 'stationary': True}
+    vol5_geopolitical: {'p_value': np.float64(0.0), 'stationary': np.True_}
+    vol5_tech: {'p_value': np.float64(0.0), 'stationary': np.True_}
+    vol5_balanced: {'p_value': np.float64(0.0), 'stationary': np.True_}
+    vol5_conservative: {'p_value': np.float64(0.0), 'stationary': np.True_}
+  ccf_saved: models/ml/m4_ccf_results.csv
 
 ─────────────────────────────────────────────────────────────────
   M5
