@@ -387,11 +387,29 @@ export default function App() {
                   </ResponsiveContainer>
                </Card>
 
-               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem' }}>
+               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1.25rem' }}>
                   {Object.entries(metrics.ml_models).map(([key, m]) => (
-                    <Card key={key} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                       <Label>{key}: {m.name}</Label>
-                       <BigNum size="1.2rem">{m.val?.toFixed(2)} <span style={{ fontSize: '0.7rem', color: C.muted }}>{m.unit}</span></BigNum>
+                    <Card key={key} style={{ display: 'flex', flexDirection: 'column', padding: '1.5rem', minHeight: 180 }}>
+                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+                          <div>
+                             <Label style={{ color: C.accent, fontSize: '0.7rem', marginBottom: 4 }}>MODEL {key}</Label>
+                             <div style={{ fontWeight: 800, fontSize: '1.1rem' }}>{m.name}</div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                             <BigNum size="1.2rem">{m.val?.toFixed(2)}</BigNum>
+                             <div style={{ fontSize: '0.65rem', color: C.muted, fontWeight: 700 }}>{m.unit}</div>
+                          </div>
+                       </div>
+                       
+                       <div style={{ borderLeft: `2px solid ${C.border}`, paddingLeft: 12, marginBottom: 12 }}>
+                          <div style={{ fontSize: '0.75rem', color: C.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Goal</div>
+                          <div style={{ fontSize: '0.85rem', lineHeight: 1.4 }}>{m.aim}</div>
+                       </div>
+
+                       <div style={{ background: `${C.accent}08`, borderRadius: 8, padding: '0.75rem' }}>
+                          <div style={{ fontSize: '0.75rem', color: C.accent, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Inference</div>
+                          <div style={{ fontSize: '0.8rem', opacity: 0.9, lineHeight: 1.4 }}>{m.insight}</div>
+                       </div>
                     </Card>
                   ))}
                </div>

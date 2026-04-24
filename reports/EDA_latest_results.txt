@@ -1,0 +1,14 @@
+--- EDA PIPELINE RESULTS ---
+Data Date Range: 2021-01-04 to 2026-04-16
+Timeline Coverage: Captured 65248 total articles across 64 months.
+Panic Threshold (geopolitical): -0.313 | Instances: 67
+Panic Threshold (technology): -0.079 | Instances: 67
+Identified Top 3 Geo Shocks: ['2023-10-18', '2025-02-05', '2025-12-04']
+Gold vs Geo-Sentiment (r=-0.029, p=0.289) -> NOT significant (p >= 0.05)
+Portfolio Geopolitical Sensitivity:
+  geopolitical: r=0.041 (p=0.138)
+  tech: r=-0.016 (p=0.548)
+  balanced: r=0.003 (p=0.923)
+  conservative: r=-0.001 (p=0.973)
+Tech overreaction correlation: r=-0.010, p=0.713
+Rolling Correlation (Tech/Tech Sentiment): Peak=0.295, Trough=-0.322
