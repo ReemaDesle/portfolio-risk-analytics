@@ -1,0 +1,108 @@
+# Portfolio Risk Analytics - Beginner Setup Guide
+
+
+
+## 1. Externally Shared Files (What you need to ask for)
+Before starting, ensure you have received the following from your teammate directly:
+1. **The Datasets (`.csv` files)**
+2. **API Keys** (for your `.env` file)
+3. **(Optional)** Pre-trained ML Models (`.pkl` files and `.csv` results) - see Section 3 below.
+
+### 1a. Setting up your Environment Variables (`.env`)
+1. In the root directory of the project (`portfolio-risk-analytics/`), create a new file named exactly `.env`.
+2. Open it and paste the API keys shared by your teammate. It should look like this:
+   ```env
+   NEWSAPI_KEY=your_news_api_key_here
+   GROQ_API_KEY=your_groq_api_key_here
+   ```
+
+### 1b. Placing the Datasets
+1. In the root directory, make sure you have the `data/processed/` folder.
+2. If your teammate sent you a zipped `data/` folder, simply extract it into the root of the project to replace the existing `data/` folder.
+3. **If you received individual CSV files**, place them EXACTLY in the `data/processed/` folder. Here are the exact file names you need to drop in:
+   - `master_data.csv`
+   - `master_news.csv`
+   - `ml_features.csv`
+   - `news_finbert_raw.csv`
+   - `news_scored_raw.csv`
+   - `sentiment_daily_index.csv`
+   - `sentiment_scored.csv`
+   - `sri_scores.csv`
+   
+*(Ensure the names match exactly, as the backend dashboard relies on these files!)*
+
+---
+
+## 2. Standard Environment Setup
+
+**Open a terminal (Terminal 1) at the project root (`portfolio-risk-analytics/`):**
+
+1. Create a virtual environment:
+   - **Mac/Linux:** `python3 -m venv venv`
+   - **Windows:** `python -m venv venv`
+
+2. Activate the virtual environment:
+   - **Mac/Linux:** `source venv/bin/activate`
+   - **Windows:** `venv\Scripts\activate`
+
+3. Install project dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+---
+
+## 3. Setting Up the Machine Learning Models (Choose ONE Option)
+
+Because the trained ML models (`.pkl`) are ignored by Git, you need to either train them locally or drop in the pre-trained ones sent by your teammate.
+
+### Option 1: Train the ML Models Yourself (Recommended)
+You can generate the required `.pkl` model files locally by running the pipeline scripts from your terminal (ensure your `venv` is still active).
+Run these two commands sequentially from the project root:
+```bash
+python pipeline/score_compute.py
+python models/train_models.py
+```
+*(Wait for this process to complete. It will automatically generate all the `.pkl` and `.csv` files inside the `models/ml/` folder).*
+
+### Option 2: Extract Pre-Trained Models Shared by Teammate
+If your teammate sent you the pre-trained models safely, you can skip the training phase.
+1. Locate the `models/ml/` folder in the project root.
+2. Place all the `.pkl` and `.csv` files provided by your teammate exactly into `models/ml/`.
+   - Examples of files to place in there: `m1_shock_classifier.pkl`, `m2_recovery_predictor.pkl`, `m3_ridge_tech.pkl`, `m4_ccf_results.csv`, `m5_domain_coefficients.csv`, `m6_clusters.csv` etc.
+
+---
+
+## 4. Run the Project Interfaces!
+
+You will need **two terminal windows** (one for the backend API, one for the frontend UI).
+
+### Start the Python Backend (Terminal 1)
+In the terminal where your `venv` is active:
+1. Navigate into the dashboard folder:
+   ```bash
+   cd dashboard
+   ```
+2. Start the FastAPI server:
+   ```bash
+   uvicorn main:app --reload
+   ```
+*(The API will now be running on http://localhost:8000)*
+
+### Start the React Frontend (Terminal 2)
+Leave Terminal 1 running and open a **new terminal window**.
+1. Navigate directly to the frontend folder:
+   ```bash
+   cd portfolio-risk-analytics/dashboard/frontend
+   ```
+2. Install the Node.js Javascript dependencies (only needed the first time):
+   ```bash
+   npm install
+   ```
+3. Start the React development server:
+   ```bash
+   npm run dev
+   ```
+*(Your frontend will spin up! Open the URL provided in the terminal, usually http://localhost:5173, in your browser to view the dynamic dashboard).*
+
+You are now fully set up and ready to run the ML inference!
